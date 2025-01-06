@@ -15,7 +15,6 @@ from tqdm.auto import trange
 
 from .sde import SDE
 from ._sample import get_eu_sample_fn, get_ode_sample_fn
-from ._shard import shard_batch
 from ._misc import (
     make_dirs, 
     plot_sde, 
@@ -29,8 +28,6 @@ from ._misc import (
 )
 
 Model = eqx.Module
-OptState = optax.OptState
-TransformUpdateFn = optax.TransformUpdateFn
 
 
 def apply_ema(
@@ -98,18 +95,28 @@ def batch_loss_fn(
 def make_step(
     model: Model, 
     sde: SDE,
-    x: Array, 
-    q: Array, 
-    a: Array, 
+    xqa: Tuple[Array, ...],
     key: Key, 
-    opt_state: OptState, 
-    opt_update: TransformUpdateFn
-) -> Tuple[Array, Model, Key, OptState]:
+    opt_state: optax.OptState, 
+    opt_update: optax.TransformUpdateFn,
+    *,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
+) -> Tuple[Array, Model, Key, optax.OptState]:
     model = eqx.nn.inference_mode(model, False)
+    if replicated_sharding:
+        model, opt_state = eqx.filter_shard((model, opt_state), replicated_sharding)
+    if sharding:
+        xqa = eqx.filter_shard(xqa, sharding)
+
+    x, q, a = xqa
+
     loss_fn = eqx.filter_value_and_grad(batch_loss_fn)
     loss, grads = loss_fn(model, sde, x, q, a, key)
+
     updates, opt_state = opt_update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
+
     key, _ = jr.split(key)
     return loss, model, key, opt_state
 
@@ -118,17 +125,25 @@ def make_step(
 def evaluate(
     model: Model, 
     sde: SDE, 
-    x: Array, 
-    q: Array, 
-    a: Array, 
-    key: Key
+    xqa: Tuple[Array, ...],
+    key: Key,
+    *,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
 ) -> Array:
     model = eqx.nn.inference_mode(model, True)
+    if replicated_sharding:
+        model, opt_state = eqx.filter_shard((model, opt_state), replicated_sharding)
+    if sharding:
+        x, q, a = eqx.filter_shard(xqa, sharding)
+
+    x, q, a = xqa
+
     loss = batch_loss_fn(model, sde, x, q, a, key)
     return loss 
 
 
-def get_opt(config: ConfigDict):
+def get_opt(config: ConfigDict) -> optax.GradientTransformation:
     return getattr(optax, config.opt)(config.lr, **config.opt_kwargs)
 
 
@@ -145,11 +160,12 @@ def train_from_config(
     reload_opt_state: bool = False,
     # Sharding of devices to run on
     sharding: Optional[jax.sharding.Sharding] = None,
+    replicated_sharding: Optional[jax.sharding.Sharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
     plot_train_data: bool = False
-) -> eqx.Module:
+) -> Model:
     """
         Trains a diffusion model built from a score network (`model`) using a stochastic 
         differential equation (SDE, `sde`) with a given dataset. Requires a config object.
@@ -228,16 +244,16 @@ def train_from_config(
 
     # Reload optimiser and state if so desired
     opt = get_opt(config)
-    if not reload_opt_state:
-        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
-        start_step = 0
-    else:
+    if reload_opt_state:
         state = load_opt_state(filename=state_filename)
 
         opt, opt_state, start_step = state.values()
         model = load_model(model, model_filename)
 
         print("Loaded model and optimiser state.")
+    else:
+        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+        start_step = 0
 
     train_key, sample_key, valid_key = jr.split(key, 3)
 
@@ -251,18 +267,25 @@ def train_from_config(
     if config.use_ema:
         ema_model = deepcopy(model)
 
-    with trange(
-        start_step, config.n_steps, colour="red"
-    ) as steps:
+    if replicated_sharding:
+        ema_model = eqx.filter_shard(ema_model, replicated_sharding)
+
+    with trange(start_step, config.n_steps, colour="red") as steps:
         for step, train_batch, valid_batch in zip(
             steps, 
             dataset.train_dataloader.loop(config.batch_size), 
             dataset.valid_dataloader.loop(config.batch_size)
         ):
             # Train
-            x, q, a = shard_batch(train_batch, sharding)
             _Lt, model, train_key, opt_state = make_step(
-                model, sde, x, q, a, train_key, opt_state, opt.update
+                model, 
+                sde, 
+                train_batch,
+                train_key, 
+                opt_state, 
+                opt.update,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             train_total_value += _Lt.item()
@@ -273,9 +296,13 @@ def train_from_config(
                 ema_model = apply_ema(ema_model, model)
 
             # Validate
-            x, q, a = shard_batch(valid_batch, sharding)
             _Lv = evaluate(
-                ema_model if config.use_ema else model, sde, x, q, a, valid_key
+                ema_model if config.use_ema else model, 
+                sde, 
+                valid_batch,
+                valid_key,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             valid_total_value += _Lv.item()
@@ -357,14 +384,15 @@ def train(
     # Reload optimiser or not
     reload_opt_state: bool = False,
     # Sharding of devices to run on
-    sharding: Optional[jax.sharding.Sharding] = None,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
     # Plotting
     plot_train_data: bool = False,
     cmap: str = "gray_r"
-) -> eqx.Module:
+) -> Model:
     """
         Trains a diffusion model using a stochastic differential equation (SDE) based on 
         the provided score network model and dataset, with support for optimizer state reloading, 
@@ -482,6 +510,9 @@ def train(
     if use_ema:
         ema_model = deepcopy(model)
 
+    if replicated_sharding:
+        ema_model = eqx.filter_shard(ema_model, replicated_sharding)
+
     with trange(start_step, n_steps, colour="red") as steps:
         for step, train_batch, valid_batch in zip(
             steps, 
@@ -489,9 +520,15 @@ def train(
             dataset.valid_dataloader.loop(batch_size)
         ):
             # Train
-            x, q, a = shard_batch(train_batch, sharding)
             _Lt, model, train_key, opt_state = make_step(
-                model, sde, x, q, a, train_key, opt_state, opt.update
+                model, 
+                sde, 
+                train_batch,
+                train_key, 
+                opt_state, 
+                opt.update,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             train_total_value += _Lt.item()
@@ -502,9 +539,13 @@ def train(
                 ema_model = apply_ema(ema_model, model)
 
             # Validate
-            x, q, a = shard_batch(valid_batch, sharding)
             _Lv = evaluate(
-                ema_model if use_ema else model, sde, x, q, a, valid_key
+                ema_model if use_ema else model, 
+                sde, 
+                valid_batch,
+                valid_key,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             valid_total_value += _Lv.item()

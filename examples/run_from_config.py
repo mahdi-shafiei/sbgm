@@ -8,14 +8,13 @@ import configs
 def main():
     """
         Fit a score-based diffusion model.
-        - Use a pre-defined config (or make your own) for 
-          the architecture and optimisation,
-        - These configs depend on torch for datasets (except Quijote).
     """
 
+    # Load (data) and save (model, samples & optimiser state) directories 
     datasets_path = "../datasets/"
     root_dir = "./"
 
+    # Config file for architecture and optimisation
     config = [
         configs.mnist_config(), 
         configs.grfs_config(),
@@ -27,11 +26,14 @@ def main():
     key = jr.key(config.seed)
     data_key, model_key, train_key = jr.split(key, 3)
 
+    # Dataset object of training data and loaders
     dataset = data.get_dataset(datasets_path, data_key, config)
 
+    # Multiple GPU training if you are so inclined
     sharding, replicated_sharding = sbgm.shard.get_shardings()
 
-    reload_opt_state = False # Restart training or not
+    # Restart training or not
+    reload_opt_state = False 
         
     # Diffusion model 
     model = sbgm.models.get_model(

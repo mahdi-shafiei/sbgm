@@ -1,598 +1,616 @@
-import math
-from collections.abc import Callable
-from typing import Optional, Union
+from __future__ import annotations
+
+from functools import partial
+from typing import Tuple, Optional, Optional, List
+from functools import partial
+
 import jax
 import jax.numpy as jnp
-import jax.random as jr
+import jax.random as jr 
 import equinox as eqx
-from jaxtyping import Key, Array, jaxtyped
-from beartype import beartype as typechecker
-from einops import rearrange
+import equinox as eqx
+from jaxtyping import Key, PRNGKeyArray, Array 
+
+import numpy as np
+from einops import einsum, rearrange, repeat
+import einx
+
+
+def identity(x):
+    return x
+
+
+def exists(v):
+    return v is not None
+
+
+def default(v, d):
+    return v if exists(v) else d
+
+
+def stop_grad(a):
+    return jax.lax.stop_gradient(a)
+
+
+def cast_tuple(t, length=1):
+    return t if isinstance(t, tuple) else ((t,) * length)
+
+
+def divisible_by(num, den):
+    return (num % den) == 0
+
+
+def key_split_allowing_none(key, n=2, i=None):
+    if key is not None:
+        if i is not None:
+            key = jr.fold_in(key, i)
+        keys = jr.split(key, n)
+    else: 
+        keys = [None] * n
+    return keys
+
+
+class Upsample(eqx.Module):
+    conv: eqx.nn.Conv2d
+
+    def __init__(
+        self, 
+        dim: int, 
+        dim_out: Optional[int] = None, 
+        *, 
+        key: Key
+    ):
+        self.conv = eqx.nn.Conv2d(
+            dim, 
+            default(dim_out, dim), 
+            kernel_size=3, 
+            padding=1, 
+            key=key
+        )
+
+    def __call__(self, x: Array) -> Array:
+        c, h, w = x.shape
+        x = jax.image.resize(
+            x, shape=(c, h * 2, w * 2), method='bilinear'
+        )
+        x = self.conv(x)
+        return x
+
+
+class Downsample(eqx.Module):
+    conv: eqx.nn.Conv2d
+
+    def __init__(
+        self, 
+        dim: int, 
+        dim_out: Optional[int] = None, 
+        *, 
+        key: Key
+    ):
+        self.conv = eqx.nn.Conv2d(
+            dim * 4, default(dim_out, dim), kernel_size=1, key=key
+        )
+
+    def __call__(self, x: Array) -> Array:
+        x = rearrange(
+            x, 'c (h p1) (w p2) -> (c p1 p2) h w', p1=2, p2=2
+        )
+        x = self.conv(x)
+        return x
+
+
+class RMSNorm(eqx.Module):
+    scale: float # Array, learnable?
+    gamma: Array
+
+    def __init__(self, dim: int):
+        self.scale = dim ** 0.5 # This is a default scaling
+        self.gamma = jnp.zeros((dim, 1, 1))
+
+    def __call__(self, x: Array) -> Array:
+        # Normalise x, shift and scale 
+        return (x / jnp.linalg.norm(x, ord=2, axis=0)) * (self.gamma + 1) * self.scale 
 
 
 class SinusoidalPosEmb(eqx.Module):
-    emb: Array
+    dim: int
+    theta: int
 
-    def __init__(self, dim: int):
-        half_dim = dim // 2
-        emb = math.log(10000) / (half_dim - 1)
-        self.emb = jnp.exp(jnp.arange(half_dim) * -emb)
+    def __init__(self, dim: int, theta: int = 10_000):
+        self.dim = dim
+        self.theta = theta
 
     def __call__(self, x: Array) -> Array:
-        emb = x * self.emb
-        emb = jnp.concatenate([jnp.sin(emb), jnp.cos(emb)], axis=-1)
+        x = jnp.atleast_1d(x)
+        half_dim = self.dim // 2
+        emb = jnp.log(self.theta) / (half_dim - 1)
+        emb = jnp.exp(jnp.arange(half_dim) * -emb)
+        emb = einx.multiply('i, j -> i j', x, emb) # emb = x * emb
+        emb = jnp.concatenate([jnp.sin(emb), jnp.cos(emb)])
         return emb
 
 
-class LinearTimeSelfAttention(eqx.Module):
-    group_norm: eqx.nn.GroupNorm
+class RandomOrLearnedSinusoidalPosEmb(eqx.Module):
+    random: bool
+    weights: Array
+
+    def __init__(self, dim: int, is_random: bool = False, *, key: Key):
+        assert divisible_by(dim, 2)
+        half_dim = dim // 2
+        self.weights = jr.normal(key, (half_dim,))
+        self.random = is_random
+
+    def __call__(self, x: Array) -> Array:
+        x = jnp.atleast_1d(x) 
+        weights = jax.lax.stop_gradient(self.weights) if self.random else self.weights
+        freqs = x * weights * 2. * jnp.pi 
+        fouriered = jnp.concatenate([jnp.sin(freqs), jnp.cos(freqs)])
+        fouriered = jnp.concatenate([x, fouriered])
+        return fouriered
+
+
+class Block(eqx.Module):
+    proj: eqx.nn.Conv2d
+    norm: RMSNorm
+    dropout: eqx.nn.Dropout
+
+    def __init__(
+        self, 
+        dim: int, 
+        dim_out: int, 
+        dropout: float = 0., 
+        *, 
+        key: Key
+    ):
+        self.proj = eqx.nn.Conv2d(
+            dim, dim_out, kernel_size=3, padding=1, key=key
+        )
+        self.norm = RMSNorm(dim_out)
+        self.dropout = eqx.nn.Dropout(dropout)
+
+    def __call__(
+        self, 
+        x: Array, 
+        scale_shift: Tuple[Array, Array] = None, 
+        key: Optional[PRNGKeyArray] = None
+    ) -> Array:
+        x = self.proj(x)
+        x = self.norm(x)
+
+        if exists(scale_shift):
+            scale, shift = scale_shift
+            x = x * (scale + 1.) + shift
+
+        return self.dropout(jax.nn.silu(x), key=key)
+
+
+class ResnetBlock(eqx.Module):
+    mlp: eqx.nn.Linear
+    block1: Block
+    block2: Block
+    res_conv: eqx.nn.Conv2d
+
+    def __init__(
+        self, 
+        dim: int, 
+        dim_out: int, 
+        *, 
+        time_emb_dim: int = None, 
+        dropout: float = 0., 
+        key: Key
+    ):
+        keys = jr.split(key, 4)
+        self.mlp = eqx.nn.Linear(
+            time_emb_dim, dim_out * 2, key=keys[0]
+        ) if exists(time_emb_dim) else None
+        self.block1 = Block(dim, dim_out, dropout=dropout, key=keys[1])
+        self.block2 = Block(dim_out, dim_out, key=keys[2])
+        self.res_conv = eqx.nn.Conv2d(
+            dim, dim_out, kernel_size=1, key=keys[3]
+        ) if dim != dim_out else eqx.nn.Identity()
+
+    def __call__(
+        self, 
+        x: Array, 
+        time_emb: Optional[Array] = None, 
+        *, 
+        key: PRNGKeyArray
+    ) -> Array:
+        keys = key_split_allowing_none(key)
+
+        scale_shift = None
+        if exists(self.mlp) and exists(time_emb):
+            time_emb = self.mlp(jax.nn.silu(time_emb))
+            time_emb = rearrange(time_emb, 'c -> c 1 1')
+            scale_shift = jnp.split(time_emb, 2)
+
+        h = self.block1(x, scale_shift=scale_shift, key=keys[0])
+
+        h = self.block2(h, key=keys[1])
+
+        return h + self.res_conv(x)
+
+
+class LinearAttention(eqx.Module):
+    scale: float
     heads: int
+    norm1: RMSNorm
+    mem_kv: Array
+    to_qkv: eqx.nn.Conv2d
+    conv: eqx.nn.Conv2d
+    norm2: RMSNorm
+
+    def __init__(
+        self,
+        dim: int,
+        heads: int = 4,
+        dim_head: int = 32,
+        num_mem_kv: int = 4,
+        *,
+        key: Key
+    ):
+        keys = jr.split(key, 3)
+
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+        hidden_dim = dim_head * heads
+
+        self.norm1 = RMSNorm(dim)
+
+        self.mem_kv = jr.normal(keys[0], (2, heads, dim_head, num_mem_kv))
+        self.to_qkv = eqx.nn.Conv2d(
+            dim, hidden_dim * 3, kernel_size=1, use_bias=False, key=keys[1]
+        )
+
+        self.conv = eqx.nn.Conv2d(hidden_dim, dim, kernel_size=1, key=keys[2])
+        self.norm2 = RMSNorm(dim)
+
+    def __call__(self, x: Array) -> Array:
+        c, h, w = x.shape
+
+        x = self.norm1(x)
+
+        qkv = jnp.split(self.to_qkv(x), 3)
+        q, k, v = tuple(
+            rearrange(t, '(h c) x y -> h c (x y)', h=self.heads) for t in qkv
+        )
+
+        mk, mv = tuple(repeat(t, 'h c n -> h c n') for t in self.mem_kv)
+        k, v = map(partial(jnp.concatenate, axis=-1), ((mk, k), (mv, v)))
+
+        q = jax.nn.softmax(q, axis=-2)
+        k = jax.nn.softmax(k, axis=-1)
+
+        q = q * self.scale
+
+        context = einsum(k, v, 'h d n, h e n -> h d e')
+
+        out = einsum(context, q, 'h d e, h d n -> h e n')
+        out = rearrange(
+            out, 'h c (x y) -> (h c) x y', h=self.heads, x=h, y=w
+        )
+        return self.norm2(self.conv(out))
+
+
+class Attention(eqx.Module):
+    scale: float
+    heads: int
+    norm: RMSNorm
+    mem_kv: Array
     to_qkv: eqx.nn.Conv2d
     to_out: eqx.nn.Conv2d
 
     def __init__(
         self,
         dim: int,
-        key: Key,
         heads: int = 4,
-        dim_head: int = 32
+        dim_head: int = 32,
+        num_mem_kv: int = 4,
+        flash: bool = False,
+        *,
+        key: Key
     ):
-        keys = jax.random.split(key, 2)
-        self.group_norm = eqx.nn.GroupNorm(min(dim // 4, 32), dim)
+        keys = jr.split(key, 3)
+        self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = eqx.nn.Conv2d(dim, hidden_dim * 3, 1, key=keys[0])
-        self.to_out = eqx.nn.Conv2d(hidden_dim, dim, 1, key=keys[1])
+
+        self.norm = RMSNorm(dim)
+
+        self.mem_kv = jr.normal(keys[0], (2, heads, num_mem_kv, dim_head))
+        self.to_qkv = eqx.nn.Conv2d(
+            dim, hidden_dim * 3, kernel_size=1, use_bias=False, key=keys[1]
+        )
+        self.to_out = eqx.nn.Conv2d(
+            hidden_dim, dim, kernel_size=1, use_bias=False, key=keys[2]
+        )
 
     def __call__(self, x: Array) -> Array:
         c, h, w = x.shape
-        x = self.group_norm(x)
-        qkv = self.to_qkv(x)
-        q, k, v = rearrange(
-            qkv, 
-            "(qkv heads c) h w -> qkv heads c (h w)", 
-            heads=self.heads, 
-            qkv=3
-        )
-        k = jax.nn.softmax(k, axis=-1)
-        context = jnp.einsum("hdn, hen -> hde", k, v)
-        out = jnp.einsum("hde, hdn -> hen", context, q)
-        out = rearrange(
-            out, 
-            "heads c (h w) -> (heads c) h w", 
-            heads=self.heads, 
-            h=h, 
-            w=w
-        )
+
+        x = self.norm(x)
+
+        qkv = jnp.split(self.to_qkv(x), 3)
+        q, k, v = map(lambda t: rearrange(t, '(h c) x y -> h (x y) c', h=self.heads), qkv)
+
+        mk, mv = map(lambda t: repeat(t, 'h n d -> h n d'), self.mem_kv)
+        k, v = map(partial(jnp.concatenate, axis=-2), ((mk, k), (mv, v)))
+
+        q = q * self.scale
+        sim = einsum(q, k, 'h i d, h j d -> h i j')
+
+        attn = jax.nn.softmax(sim, axis=-1)
+        out = einsum(attn, v, 'h i j, h j d -> h i d')
+
+        out = rearrange(out, 'h (x y) d -> (h d) x y', x=h, y=w)
         return self.to_out(out)
+ 
 
+class TimeMLP(eqx.Module):
+    embed: RandomOrLearnedSinusoidalPosEmb | SinusoidalPosEmb
+    layers: List[eqx.Module]
 
-def upsample_2d(y, factor=2):
-    C, H, W = y.shape
-    y = jnp.reshape(y, [C, H, 1, W, 1])
-    y = jnp.tile(y, [1, 1, factor, 1, factor])
-    return jnp.reshape(y, [C, H * factor, W * factor])
-
-
-def downsample_2d(y, factor=2):
-    C, H, W = y.shape
-    y = jnp.reshape(y, [C, H // factor, factor, W // factor, factor])
-    return jnp.mean(y, axis=[2, 4])
-
-
-def exact_zip(*args):
-    _len = len(args[0])
-    for arg in args:
-        assert len(arg) == _len
-    return zip(*args)
-
-
-def key_split_allowing_none(key):
-    if key is None:
-        return key, None
-    else:
-        return jr.split(key)
-
-
-class Residual(eqx.Module):
-    fn: LinearTimeSelfAttention
-
-    def __init__(self, fn):
-        self.fn = fn
-
-    def __call__(self, x, *args, **kwargs):
-        return self.fn(x, *args, **kwargs) + x
-
-
-class ResnetBlock(eqx.Module):
-    dim_out: int
-    is_biggan: bool
-    up: bool
-    down: bool
-    dropout_rate: float
-    time_emb_dim: int
-    mlp_layers: list[Union[Callable, eqx.nn.Linear]]
-    scaling: Union[
-        None, Callable, eqx.nn.ConvTranspose2d, eqx.nn.Conv2d
-    ]
-    block1_groupnorm: eqx.nn.GroupNorm
-    block1_conv: eqx.nn.Conv2d
-    block2_layers: list[
-        Union[eqx.nn.GroupNorm, eqx.nn.Dropout, eqx.nn.Conv2d, Callable]
-    ]
-    res_conv: eqx.nn.Conv2d
-    attn: Optional[Residual]
-    a_dim: Optional[int]
-
-    def __init__(
-        self,
-        dim_in,
-        dim_out,
-        is_biggan,
-        up,
-        down,
-        time_emb_dim,
-        dropout_rate,
-        is_attn,
-        heads,
-        dim_head,
-        a_dim=None,
-        *,
-        key,
-    ):
-        keys = jr.split(key, 7)
-        self.dim_out = dim_out
-        self.is_biggan = is_biggan
-        self.up = up
-        self.down = down
-        self.dropout_rate = dropout_rate
-        self.time_emb_dim = time_emb_dim
-
-        self.mlp_layers = [
-            jax.nn.silu,
+    def __init__(self, embed, fourier_dim, time_dim, a_dim, *, key):
+        keys = jr.split(key)
+        self.embed = embed 
+        self.layers = [
             eqx.nn.Linear(
-                time_emb_dim + a_dim if a_dim is not None else time_emb_dim, 
-                dim_out, 
+                fourier_dim + a_dim if a_dim is not None else fourier_dim, 
+                time_dim, 
                 key=keys[0]
             ),
-        ]
-        self.block1_groupnorm = eqx.nn.GroupNorm(min(dim_in // 4, 32), dim_in)
-        self.block1_conv = eqx.nn.Conv2d(dim_in, dim_out, 3, padding=1, key=keys[1])
-        self.block2_layers = [
-            eqx.nn.GroupNorm(min(dim_out // 4, 32), dim_out),
-            jax.nn.silu,
-            eqx.nn.Dropout(dropout_rate),
-            eqx.nn.Conv2d(dim_out, dim_out, 3, padding=1, key=keys[2]),
-        ]
-
-        assert not self.up or not self.down
-
-        if is_biggan:
-            if self.up:
-                self.scaling = upsample_2d
-            elif self.down:
-                self.scaling = downsample_2d
-            else:
-                self.scaling = None
-        else:
-            if self.up:
-                self.scaling = eqx.nn.ConvTranspose2d(
-                    dim_in,
-                    dim_in,
-                    kernel_size=4,
-                    stride=2,
-                    padding=1,
-                    key=keys[3],
-                )
-            elif self.down:
-                self.scaling = eqx.nn.Conv2d(
-                    dim_in,
-                    dim_in,
-                    kernel_size=3,
-                    stride=2,
-                    padding=1,
-                    key=keys[4],
-                )
-            else:
-                self.scaling = None
-        # For DDPM Yang use their own custom layer called NIN, which is
-        # equivalent to a 1x1 conv
-        self.res_conv = eqx.nn.Conv2d(dim_in, dim_out, kernel_size=1, key=keys[5])
-
-        if is_attn:
-            self.attn = Residual(
-                LinearTimeSelfAttention(
-                    dim_out,
-                    heads=heads,
-                    dim_head=dim_head,
-                    key=keys[6],
-                )
+            jax.nn.gelu,
+            eqx.nn.Linear(
+                time_dim + a_dim if a_dim is not None else time_dim, 
+                time_dim, 
+                key=keys[1]
             )
-        else:
-            self.attn = None
-        self.a_dim = a_dim
+        ]
 
-    def __call__(
-        self, 
-        x: Array, 
-        t: Union[float, Array], 
-        a: Array = None, 
-        *, 
-        key: Key
-    ) -> Array:
-        C, _, _ = x.shape
-        # In DDPM, each set of resblocks ends with an up/down sampling. In
-        # biggan there is a final resblock after the up/downsampling. In this
-        # code, the biggan approach is taken for both.
-        # norm -> nonlinearity -> up/downsample -> conv follows Yang
-        # https://github.dev/yang-song/score_sde/blob/main/models/layerspp.py
-        h = jax.nn.silu(self.block1_groupnorm(x))
-        if self.up or self.down:
-            h = self.scaling(h) # pyright: ignore
-            x = self.scaling(x) # pyright: ignore
-        h = self.block1_conv(h)
-
-        for layer in self.mlp_layers:
-            # Add parameter conditioning here
-            if isinstance(layer, eqx.nn.Linear):
-                if a is not None and self.a_dim is not None:
-                    _input = jnp.concatenate([t, a]) 
-                else:
-                    _input = t
-            else:
-                _input = t
-            t = layer(_input)
-        h = h + t[..., jnp.newaxis, jnp.newaxis]
-        for layer in self.block2_layers:
-            # Precisely 1 dropout layer in block2_layers which requires a key.
-            if isinstance(layer, eqx.nn.Dropout):
-                h = layer(h, key=key)
-            else:
-                h = layer(h)
-
-        if C != self.dim_out or self.up or self.down:
-            x = self.res_conv(x)
-
-        out = (h + x) / jnp.sqrt(2.)
-        if self.attn is not None:
-            out = self.attn(out)
-        return out
-
-
-def get_activation_fn(fn):
-    if isinstance(fn, str):
-        return getattr(jax.nn, fn)
-    else:
-        return fn
+    def __call__(self, t, a):
+        t = self.embed(t)
+        t = self.layers[0](jnp.concatenate([t, a]) if a is not None else t)
+        t = self.layers[1](t)
+        t = self.layers[2](jnp.concatenate([t, a]) if a is not None else t)
+        return t
 
 
 class UNet(eqx.Module):
-    time_pos_emb: SinusoidalPosEmb
-    mlp: eqx.nn.MLP
-    first_conv: eqx.nn.Conv2d
-    down_res_blocks: list[list[ResnetBlock]]
+    channels: int
+    init_conv: eqx.nn.Conv2d
+    random_or_learned_sinusoidal_cond: bool
+    time_mlp: List[eqx.Module]
+
+    downs: List[eqx.Module]
+    ups: List[eqx.Module]
+
     mid_block1: ResnetBlock
+    mid_attn: Attention | LinearAttention
     mid_block2: ResnetBlock
-    ups_res_blocks: list[list[ResnetBlock]]
-    final_conv_layers: list[Union[Callable, eqx.nn.LayerNorm, eqx.nn.Conv2d]]
-    final_activation: Optional[Callable]
-    q_dim: int
-    a_dim: int
+
+    out_dim: int
+    final_res_block: ResnetBlock
+    final_conv: eqx.nn.Conv2d
 
     def __init__(
         self,
-        data_shape: tuple[int, int, int],
-        dim_mults: list[int],
-        hidden_size: int,
-        heads: int,
-        dim_head: int,
-        dropout_rate: float,
-        num_res_blocks: int,
-        attn_resolutions: list[int],
-        is_biggan: bool = False,
-        final_activation: Optional[Union[callable, str]] = None,
-        q_dim: Optional[int] = None, # Number of channels in conditioning map
-        a_dim: Optional[int] = None, # Number of parameters in conditioning 
+        dim: int,
+        init_dim: Optional[int] = None,
+        out_dim: Optional[int] = None,
+        dim_mults: Tuple[int, ...] = (1, 2, 4, 8),
+        channels: int = 1,
+        q_channels: Optional[int] = None,
+        a_dim: Optional[int] = None,
+        learned_variance: bool = False,
+        learned_sinusoidal_cond: bool = False,
+        random_fourier_features: bool = False,
+        learned_sinusoidal_dim: int = 16,
+        sinusoidal_pos_emb_theta: int = 10_000,
+        dropout: float = 0.,
+        attn_dim_head: int = 32,
+        attn_heads: int = 4,
+        full_attn: bool = False , # Defaults to full attention only for inner most layer
+        flash_attn: bool = False,
         *,
-        key: Key,
+        key: Key
     ):
-        """
-            UNet score network. 
-            
-            This model supports optional conditioning through `q_dim` and `a_dim`, 
-            and can be adjusted to different input shapes and configurations.
+        key_modules, key_down, key_mid, key_up, key_final = jr.split(key, 5)
+        keys = jr.split(key_modules, 3)
 
-            Parameters:
-            -----------
-            `data_shape` : `tuple[int, int, int]`
-                Shape of the input data as `(height, width, channels)`.
-            
-            `dim_mults` : `list[int]`
-                List of integers representing the dimension multipliers for each level in the UNet.
-            
-            `hidden_size` : `int`
-                Size of the hidden layers in the MLPs and other parts of the network.
-            
-            `heads` : `int`
-                Number of heads used in the attention mechanism (if any).
-            
-            `dim_head` : `int`
-                Dimension of each head in the attention mechanism.
-            
-            `dropout_rate` : `float`
-                The dropout rate used in various parts of the network.
-            
-            `num_res_blocks` : `int`
-                Number of residual blocks used at each stage in the UNet.
-            
-            `attn_resolutions` : `list[int]`
-                List of resolutions at which attention is applied in the network.
-            
-            `is_biggan` : `bool`
-                Whether the model is based on the BigGAN architecture.
-            
-            `final_activation` : `Optional[Callable]`, default: `jax.nn.tanh`
-                The final activation function to be applied to the output.
-            
-            `q_dim` : `Optional[int]`, default: `None`
-                The number of channels in the conditioning map. 
-                Must be same shape as `x` in `__call__`.
-            
-            `a_dim` : `Optional[int]`, default: `None`
-                The number of parameters in the conditioning.
-            
-            `key` : `jr.PRNGKey`
-                JAX random key used for initialization.
-        """
+        # Determine dimensions
+        self.channels = channels
 
-        keys = jr.split(key, 7)
-
-        data_channels, in_height, in_width = data_shape
-
-        dims = [hidden_size] + [hidden_size * m for m in dim_mults]
-        in_out = list(exact_zip(dims[:-1], dims[1:]))
-
-        self.time_pos_emb = SinusoidalPosEmb(hidden_size)
-        self.mlp = eqx.nn.MLP(
-            hidden_size + a_dim if a_dim is not None else hidden_size,
-            hidden_size,
-            width_size=4 * hidden_size,
-            depth=1,
-            activation=jax.nn.silu,
-            key=keys[0],
+        init_dim = default(init_dim, dim)
+        self.init_conv = eqx.nn.Conv2d(
+            channels + q_channels if q_channels is not None else channels, 
+            init_dim, 
+            kernel_size=7, 
+            padding=3, 
+            key=keys[0]
         )
-        self.first_conv = eqx.nn.Conv2d(
-            data_channels + q_dim if q_dim is not None else data_channels, 
-            hidden_size, 
-            kernel_size=3, 
-            padding=1, 
+
+        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+        in_out = list(zip(dims[:-1], dims[1:]))
+
+        # Time embeddings
+        time_dim = dim * 4
+
+        self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
+
+        if self.random_or_learned_sinusoidal_cond:
+            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(
+                learned_sinusoidal_dim, random_fourier_features, key=keys[1]
+            )
+            fourier_dim = learned_sinusoidal_dim + 1
+        else:
+            sinu_pos_emb = SinusoidalPosEmb(
+                dim, theta=sinusoidal_pos_emb_theta
+            )
+            fourier_dim = dim
+
+        self.time_mlp = TimeMLP(
+            sinu_pos_emb, fourier_dim, time_dim, a_dim, key=keys[3]
+        )
+
+        # Attention
+        if not full_attn:
+            full_attn = (*((False,) * (len(dim_mults) - 1)), True)
+
+        num_stages = len(dim_mults)
+        full_attn  = cast_tuple(full_attn, num_stages)
+        attn_heads = cast_tuple(attn_heads, num_stages)
+        attn_dim_head = cast_tuple(attn_dim_head, num_stages)
+
+        assert len(full_attn) == len(dim_mults)
+
+        # Prepare blocks
+        FullAttention = partial(Attention, flash=flash_attn)
+        resnet_block = partial(ResnetBlock, time_emb_dim=time_dim, dropout=dropout)
+
+        # Layers
+        self.downs = []
+        self.ups = []
+        num_resolutions = len(in_out)
+
+        # Downsampling layers 
+        for ind, (
+            (dim_in, dim_out), layer_full_attn, layer_attn_heads, layer_attn_dim_head
+        ) in enumerate(
+            zip(in_out, full_attn, attn_heads, attn_dim_head)
+        ):
+            keys = jr.split(jr.fold_in(key_down, ind), 4)
+
+            is_last = ind >= (num_resolutions - 1)
+
+            attn_class = FullAttention if layer_full_attn else LinearAttention
+
+            self.downs.append(
+                [
+                    resnet_block(dim_in, dim_in, key=keys[0]),
+                    resnet_block(dim_in, dim_in, key=keys[1]),
+                    attn_class(
+                        dim_in, 
+                        dim_head=layer_attn_dim_head, 
+                        heads=layer_attn_heads, 
+                        key=keys[2]
+                    ),
+                    Downsample(dim_in, dim_out, key=keys[3]) 
+                    if not is_last else 
+                    eqx.nn.Conv2d(
+                        dim_in, dim_out, kernel_size=3, padding=1, key=keys[3]
+                    )
+                ]
+            )
+
+        # Middle layers + attention
+        mid_dim = dims[-1]
+        keys = jr.split(key_mid, 3)
+        self.mid_block1 = resnet_block(mid_dim, mid_dim, key=keys[0])
+        self.mid_attn = FullAttention(
+            mid_dim, 
+            heads=attn_heads[-1], 
+            dim_head=attn_dim_head[-1],
+            key=keys[1]
+        )
+        self.mid_block2 = resnet_block(mid_dim, mid_dim, key=keys[2])
+
+        # Upsampling layers + skip connections
+        for ind, (
+            (dim_in, dim_out), layer_full_attn, layer_attn_heads, layer_attn_dim_head
+        ) in enumerate(
+            zip(*map(reversed, (in_out, full_attn, attn_heads, attn_dim_head)))
+        ):
+            keys = jr.split(jr.fold_in(key_up, ind), 4)
+
+            is_last = ind == (len(in_out) - 1)
+
+            attn_class = FullAttention if layer_full_attn else LinearAttention
+
+            self.ups.append(
+                [
+                    resnet_block(dim_out + dim_in, dim_out, key=keys[0]),
+                    resnet_block(dim_out + dim_in, dim_out, key=keys[1]),
+                    attn_class(
+                        dim_out, 
+                        dim_head=layer_attn_dim_head, 
+                        heads=layer_attn_heads, 
+                        key=keys[2]
+                    ),
+                    Upsample(dim_out, dim_in, key=keys[3]) if not is_last else eqx.nn.Conv2d(
+                        dim_out, dim_in, kernel_size=3, padding=1, key=keys[3]
+                    )
+                ]
+            )
+
+        default_out_dim = channels * (1 if not learned_variance else 2)
+        self.out_dim = default(out_dim, default_out_dim)
+
+        keys = jr.split(key_final)
+        self.final_res_block = resnet_block(init_dim * 2, init_dim, key=keys[0])
+        self.final_conv = eqx.nn.Conv2d(
+            init_dim + q_channels if q_channels is not None else init_dim, 
+            self.out_dim, 
+            kernel_size=1, 
             key=keys[1]
         )
 
-        h, w = in_height, in_width
-        self.down_res_blocks = []
-        num_keys = len(in_out) * num_res_blocks - 1
-        keys_resblock = jr.split(keys[2], num_keys)
-        i = 0
-        for ind, (dim_in, dim_out) in enumerate(in_out):
-            # Use attention if user specifies it for this resolution in the UNet
-            if h in attn_resolutions and w in attn_resolutions:
-                is_attn = True
-            else:
-                is_attn = False
-
-            res_blocks = [
-                ResnetBlock(
-                    dim_in=dim_in,
-                    dim_out=dim_out,
-                    is_biggan=is_biggan,
-                    up=False,
-                    down=False,
-                    time_emb_dim=hidden_size,
-                    dropout_rate=dropout_rate,
-                    is_attn=is_attn,
-                    heads=heads,
-                    dim_head=dim_head,
-                    key=keys_resblock[i],
-                )
-            ]
-            i += 1
-            for _ in range(num_res_blocks - 2):
-                res_blocks.append(
-                    ResnetBlock(
-                        dim_in=dim_out,
-                        dim_out=dim_out,
-                        is_biggan=is_biggan,
-                        up=False,
-                        down=False,
-                        time_emb_dim=hidden_size,
-                        dropout_rate=dropout_rate,
-                        is_attn=is_attn,
-                        heads=heads,
-                        dim_head=dim_head,
-                        key=keys_resblock[i],
-                    )
-                )
-                i += 1
-            if ind < (len(in_out) - 1):
-                res_blocks.append(
-                    ResnetBlock(
-                        dim_in=dim_out,
-                        dim_out=dim_out,
-                        is_biggan=is_biggan,
-                        up=False,
-                        down=True,
-                        time_emb_dim=hidden_size,
-                        dropout_rate=dropout_rate,
-                        is_attn=is_attn,
-                        heads=heads,
-                        dim_head=dim_head,
-                        key=keys_resblock[i],
-                    )
-                )
-                i += 1
-                h, w = h // 2, w // 2
-            self.down_res_blocks.append(res_blocks)
-
-        assert i == num_keys
-
-        mid_dim = dims[-1]
-        self.mid_block1 = ResnetBlock(
-            dim_in=mid_dim,
-            dim_out=mid_dim,
-            is_biggan=is_biggan,
-            up=False,
-            down=False,
-            time_emb_dim=hidden_size,
-            dropout_rate=dropout_rate,
-            is_attn=True,
-            heads=heads,
-            dim_head=dim_head,
-            a_dim=a_dim,
-            key=keys[3],
-        )
-        self.mid_block2 = ResnetBlock(
-            dim_in=mid_dim,
-            dim_out=mid_dim,
-            is_biggan=is_biggan,
-            up=False,
-            down=False,
-            time_emb_dim=hidden_size,
-            dropout_rate=dropout_rate,
-            is_attn=False,
-            heads=heads,
-            dim_head=dim_head,
-            a_dim=a_dim,
-            key=keys[4],
-        )
-
-        self.ups_res_blocks = []
-        num_keys = len(in_out) * (num_res_blocks + 1) - 1
-        keys_resblock = jr.split(keys[5], num_keys)
-        i = 0
-        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
-            if h in attn_resolutions and w in attn_resolutions:
-                is_attn = True
-            else:
-                is_attn = False
-
-            res_blocks = []
-            for _ in range(num_res_blocks - 1):
-                res_blocks.append(
-                    ResnetBlock(
-                        dim_in=dim_out * 2,
-                        dim_out=dim_out,
-                        is_biggan=is_biggan,
-                        up=False,
-                        down=False,
-                        time_emb_dim=hidden_size,
-                        dropout_rate=dropout_rate,
-                        is_attn=is_attn,
-                        heads=heads,
-                        dim_head=dim_head,
-                        key=keys_resblock[i],
-                    )
-                )
-                i += 1
-            res_blocks.append(
-                ResnetBlock(
-                    dim_in=dim_out + dim_in,
-                    dim_out=dim_in,
-                    is_biggan=is_biggan,
-                    up=False,
-                    down=False,
-                    time_emb_dim=hidden_size,
-                    dropout_rate=dropout_rate,
-                    is_attn=is_attn,
-                    heads=heads,
-                    dim_head=dim_head,
-                    key=keys_resblock[i],
-                )
-            )
-            i += 1
-            if ind < (len(in_out) - 1):
-                res_blocks.append(
-                    ResnetBlock(
-                        dim_in=dim_in,
-                        dim_out=dim_in,
-                        is_biggan=is_biggan,
-                        up=True,
-                        down=False,
-                        time_emb_dim=hidden_size,
-                        dropout_rate=dropout_rate,
-                        is_attn=is_attn,
-                        heads=heads,
-                        dim_head=dim_head,
-                        key=keys_resblock[i],
-                    )
-                )
-                i += 1
-                h, w = h * 2, w * 2
-
-            self.ups_res_blocks.append(res_blocks)
-        assert i == num_keys
-
-        self.final_conv_layers = [
-            eqx.nn.GroupNorm(min(hidden_size // 4, 32), hidden_size),
-            jax.nn.silu,
-            eqx.nn.Conv2d(hidden_size, data_channels, 1, key=keys[6]),
-        ]
-        self.final_activation = get_activation_fn(final_activation)
-
-        self.q_dim = q_dim 
-        self.a_dim = a_dim 
+    @property
+    def downsample_factor(self):
+        return 2 ** (len(self.downs) - 1)
 
     def __call__(
         self, 
-        t: Union[float, Array], 
-        y: Array, 
+        t: Array, 
+        x: Array, 
         q: Optional[Array] = None, 
         a: Optional[Array] = None, 
-        *, 
-        key: Optional[Key] = None
+        key: PRNGKeyArray = None
     ) -> Array:
-        t = self.time_pos_emb(t)
+        assert all(
+            [divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]
+        ), (
+            f"Input dimensions {x.shape[-2:]} need to be divisible"
+            f" by {self.downsample_factor}, given the UNet"
+        )
 
-        if self.a_dim is not None and a is not None:
-            _input = jnp.concatenate([t, a])
-        else:
-            _input = t
-        t = self.mlp(_input) 
+        key_down, key_mid, key_up, key_final = key_split_allowing_none(key, n=4) 
 
-        # Stack q on channel axis
-        if self.q_dim is not None and q is not None:
-            _input = jnp.concatenate([y, q])
-        else:
-            _input = y
-        h = self.first_conv(_input)
+        x = self.init_conv(jnp.concatenate([x, q]) if q is not None else x)
+        r = x.copy()
 
-        # Downsampling blocks
-        hs = [h]
-        for res_blocks in self.down_res_blocks:
-            for res_block in res_blocks:
-                key, subkey = key_split_allowing_none(key)
-                h = res_block(h, t, key=subkey)
-                hs.append(h)
+        t = self.time_mlp(t, a)
 
-        # Middle blocks
-        key, subkey = key_split_allowing_none(key)
-        h = self.mid_block1(h, t, a=a, key=subkey) 
-        key, subkey = key_split_allowing_none(key)
-        h = self.mid_block2(h, t, a=a, key=subkey) 
+        h = []
+        for i, (block1, block2, attn, downsample) in enumerate(self.downs):
+            keys = key_split_allowing_none(key_down, i=i)
 
-        # Upsampling blocks
-        for res_blocks in self.ups_res_blocks:
-            for res_block in res_blocks:
-                key, subkey = key_split_allowing_none(key)
-                if res_block.up:
-                    h = res_block(h, t, key=subkey)
-                else:
-                    h = res_block(
-                        jnp.concatenate((h, hs.pop()), axis=0), t, key=subkey
-                    )
+            x = block1(x, t, key=keys[0])
+            h.append(x)
 
-        assert len(hs) == 0
+            x = block2(x, t, key=keys[1])
+            x = attn(x) + x
+            h.append(x)
 
-        for layer in self.final_conv_layers:
-            h = layer(h)
-        return self.final_activation(h) if self.final_activation is not None else h
+            x = downsample(x)
+
+        keys = key_split_allowing_none(key_mid)
+        x = self.mid_block1(x, t, key=keys[0])
+        x = self.mid_attn(x) + x
+        x = self.mid_block2(x, t, key=keys[1])
+
+        for i, (block1, block2, attn, upsample) in enumerate(self.ups):
+            keys = key_split_allowing_none(key_up, i=i)
+
+            x = jnp.concatenate([x, h.pop()])
+            x = block1(x, t, key=keys[0])
+
+            x = jnp.concatenate([x, h.pop()])
+            x = block2(x, t, key=keys[1])
+            x = attn(x) + x
+
+            x = upsample(x)
+
+        x = jnp.concatenate([x, r])
+        x = self.final_res_block(x, t, key=key_final)
+
+        return self.final_conv(jnp.concatenate([x, q]) if q is not None else x)

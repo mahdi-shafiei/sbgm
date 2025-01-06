@@ -5,6 +5,11 @@ import equinox as eqx
 from jaxtyping import Key, Array
 
 
+def default_weight_fn(t, *, beta_integral=None, sigma_fn=None): 
+    assert not ((beta_integral is not None) and (sigma_fn is not None))
+    return 1. - jnp.exp(-beta_integral(t))
+
+
 class SDE(eqx.Module):
     """
         SDE abstract class.

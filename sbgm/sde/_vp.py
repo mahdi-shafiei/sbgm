@@ -61,8 +61,6 @@ class VPSDE(SDE):
             where
                 mu(x(0), t) = x(0) * exp(-0.5 * int[beta(s)])
                 sigma^2(t) = I * (1 - exp(-int[beta(s)]))
-
-            -> return mean * x and std (not var?)
         """
         beta_integral = self.beta_integral_fn(t)
         mean = jnp.exp(-0.5 * beta_integral) * x 

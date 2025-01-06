@@ -46,8 +46,20 @@ def flowers(key: Key, n_pix: int) -> ScalerDataset:
         transform=valid_transform
     )
 
-    train_dataloader = TorchDataLoader(train_dataset, key=key_train)
-    valid_dataloader = TorchDataLoader(valid_dataset, key=key_valid)
+    train_dataloader = TorchDataLoader(
+        train_dataset, 
+        data_shape=data_shape, 
+        context_shape=None, 
+        parameter_dim=1,
+        key=key_train
+    )
+    valid_dataloader = TorchDataLoader(
+        valid_dataset, 
+        data_shape=data_shape, 
+        context_shape=None, 
+        parameter_dim=1,
+        key=key_valid
+    )
 
     def label_fn(key, n):
         Q = None
@@ -59,7 +71,8 @@ def flowers(key: Key, n_pix: int) -> ScalerDataset:
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         data_shape=data_shape,
-        context_shape=context_shape,
+        context_shape=None,
+        parameter_dim=1,
         scaler=scaler,
         label_fn=label_fn
     )
