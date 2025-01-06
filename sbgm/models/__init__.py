@@ -31,7 +31,8 @@ def get_model(
             mix_patch_size=config.model.mix_patch_size,
             mix_hidden_size=config.model.mix_hidden_size,
             num_blocks=config.model.num_blocks,
-            t1=config.t1,
+            t1=config.sde.t1,
+            final_activation=config.model.final_activation,
             q_dim=context_channels,
             a_dim=parameter_dim,
             key=model_key

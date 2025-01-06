@@ -61,9 +61,9 @@ def plot_model_sample(eu_sample, ode_sample, dataset, cmap, filename):
         plt.close()
 
     def rescale(sample):
-        # Input data [0,1] was normed to [-1, 1]
-        sample = dataset.scaler.reverse(sample) # [-1,1] -> [0, 1]
-        sample = jnp.clip(sample, 0., 1.) 
+        if dataset.scaler is not None:
+            sample = dataset.scaler.reverse(sample) 
+            sample = jnp.clip(sample, 0., 1.) 
         return sample
 
     # EU sampling
@@ -80,9 +80,8 @@ def plot_model_sample(eu_sample, ode_sample, dataset, cmap, filename):
 def plot_train_sample(dataset, sample_size, vs, cmap, filename):
     # Unscale data from dataloader (ignoring parameters)
     X, Q, A = next(dataset.train_dataloader.loop(sample_size ** 2))
-    print("batch X", X.min(), X.max())
-    X = dataset.scaler.reverse(X)[:sample_size ** 2]
-    print("batch X (scaled)", X.min(), X.max())
+    if dataset.scaler is not None:
+        X = dataset.scaler.reverse(X)[:sample_size ** 2]
 
     fig, ax = plt.subplots(dpi=300)
     samples_onto_ax(X, fig, ax, vs, cmap)

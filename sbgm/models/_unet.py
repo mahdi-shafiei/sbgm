@@ -259,6 +259,13 @@ class ResnetBlock(eqx.Module):
         return out
 
 
+def get_activation_fn(fn):
+    if isinstance(fn, str):
+        return getattr(jax.nn, fn)
+    else:
+        return fn
+
+
 class UNet(eqx.Module):
     time_pos_emb: SinusoidalPosEmb
     mlp: eqx.nn.MLP
@@ -283,7 +290,7 @@ class UNet(eqx.Module):
         num_res_blocks: int,
         attn_resolutions: list[int],
         is_biggan: bool = False,
-        final_activation: Optional[Callable] = jax.nn.tanh,
+        final_activation: Optional[Union[callable, str]] = None,
         q_dim: Optional[int] = None, # Number of channels in conditioning map
         a_dim: Optional[int] = None, # Number of parameters in conditioning 
         *,
@@ -530,7 +537,7 @@ class UNet(eqx.Module):
             jax.nn.silu,
             eqx.nn.Conv2d(hidden_size, data_channels, 1, key=keys[6]),
         ]
-        self.final_activation = final_activation
+        self.final_activation = get_activation_fn(final_activation)
 
         self.q_dim = q_dim 
         self.a_dim = a_dim 

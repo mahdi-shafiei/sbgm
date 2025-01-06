@@ -22,7 +22,7 @@ class AdaLayerNorm(eqx.Module):
         """
             Adaptive layer norm; generate scale and shift parameters from conditioning context.
         """
-        data_dim = jnp.prod(jnp.asarray(data_shape))
+        data_dim = jnp.prod(jnp.asarray(data_shape)).item() # Ensure this isn't a jax array
         self.net = eqx.nn.Linear(condition_dim, data_dim * 2, key=key)
         # Don't use bias or scale since these will be learnable through the conditioning context
         self.ln = eqx.nn.LayerNorm(data_shape, use_bias=False, use_weight=False)
@@ -119,6 +119,13 @@ def get_timestep_embedding(timesteps, embedding_dim):
     return emb
 
 
+def get_activation_fn(fn):
+    if isinstance(fn, str):
+        return getattr(jax.nn, fn)
+    else:
+        return fn
+
+
 class Mixer2d(eqx.Module):
     conv_in: eqx.nn.Conv2d
     conv_out: eqx.nn.ConvTranspose2d
@@ -126,6 +133,7 @@ class Mixer2d(eqx.Module):
     norm: eqx.nn.LayerNorm
     t1: float
     embedding_dim: int
+    final_activation: callable
 
     def __init__(
         self,
@@ -137,8 +145,9 @@ class Mixer2d(eqx.Module):
         num_blocks: int,
         t1: float,
         embedding_dim: int = 8,
-        q_dim: int = None,
-        a_dim: int = None,
+        final_activation: Optional[Union[callable, str]] = None,
+        q_dim: Optional[int] = None,
+        a_dim: Optional[int] = None,
         *,
         key: Key
     ):
@@ -173,6 +182,10 @@ class Mixer2d(eqx.Module):
             
             `embedding_dim` : `int`, default: `4`
                 Dimensionality of the time embedding. Defaults to `8`.
+
+            `final_activation` : `Optional[Union[callable, str]]`, default: `None`
+                Final activation function on output of model. Supply as a string
+                of one of the attributes of `jax.nn` or a custom callable.
             
             `q_dim` : `Optional[int]`, default: `None`
                 The number of channels in the conditioning map. Can be `None`.
@@ -222,6 +235,7 @@ class Mixer2d(eqx.Module):
         self.norm = eqx.nn.LayerNorm((hidden_size, num_patches))
         self.t1 = t1
         self.embedding_dim = embedding_dim
+        self.final_activation = get_activation_fn(final_activation)
 
     def __call__(
         self, 
@@ -255,4 +269,7 @@ class Mixer2d(eqx.Module):
         y = einops.rearrange(
             y, "c (h w) -> c h w", h=patch_height, w=patch_width
         )
-        return self.conv_out(y)
+        y = self.conv_out(y)
+        if self.final_activation is not None:
+            y = self.final_activation(y)
+        return y

@@ -51,6 +51,7 @@ def main():
         dataset,
         config,
         reload_opt_state=reload_opt_state,
+        plot_train_data=True,
         sharding=sharding,
         save_dir=root_dir
     )

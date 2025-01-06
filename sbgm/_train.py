@@ -149,7 +149,7 @@ def train_from_config(
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
     plot_train_data: bool = False
-):
+) -> eqx.Module:
     """
         Trains a diffusion model built from a score network (`model`) using a stochastic 
         differential equation (SDE, `sde`) with a given dataset. Requires a config object.
@@ -233,9 +233,9 @@ def train_from_config(
         start_step = 0
     else:
         state = load_opt_state(filename=state_filename)
-        model = load_model(model, model_filename)
 
         opt, opt_state, start_step = state.values()
+        model = load_model(model, model_filename)
 
         print("Loaded model and optimiser state.")
 
@@ -251,7 +251,9 @@ def train_from_config(
     if config.use_ema:
         ema_model = deepcopy(model)
 
-    with trange(start_step, config.n_steps, colour="red") as steps:
+    with trange(
+        start_step, config.n_steps, colour="red"
+    ) as steps:
         for step, train_batch, valid_batch in zip(
             steps, 
             dataset.train_dataloader.loop(config.batch_size), 
@@ -281,10 +283,7 @@ def train_from_config(
             valid_losses.append(valid_total_value / valid_total_size)
 
             steps.set_postfix(
-                {
-                    "Lt" : f"{train_losses[-1]:.3E}",
-                    "Lv" : f"{valid_losses[-1]:.3E}"
-                }
+                {"Lt" : f"{train_losses[-1]:.3E}", "Lv" : f"{valid_losses[-1]:.3E}"}
             )
 
             if (step % config.sample_and_save_every) == 0 or step == config.n_steps - 1:
@@ -365,7 +364,7 @@ def train(
     # Plotting
     plot_train_data: bool = False,
     cmap: str = "gray_r"
-):
+) -> eqx.Module:
     """
         Trains a diffusion model using a stochastic differential equation (SDE) based on 
         the provided score network model and dataset, with support for optimizer state reloading, 
@@ -529,20 +528,24 @@ def train(
                     sample_fn = get_eu_sample_fn(
                         ema_model if use_ema else model, sde, dataset.data_shape
                     )
-                    eu_sample = jax.vmap(sample_fn)(sample_keys, Q, A)
+                    eu_samples = jax.vmap(sample_fn)(sample_keys, Q, A)
+                else:
+                    eu_samples = None
 
                 # ODE sampling
                 if ode_sample:
                     sample_fn = get_ode_sample_fn(
                         ema_model if use_ema else model, sde, dataset.data_shape
                     )
-                    ode_sample = jax.vmap(sample_fn)(sample_keys, Q, A)
+                    ode_samples = jax.vmap(sample_fn)(sample_keys, Q, A)
+                else:
+                    ode_samples = None
 
                 # Sample images and plot
                 if eu_sample or ode_sample:
                     plot_model_sample(
-                        eu_sample,
-                        ode_sample,
+                        eu_samples,
+                        ode_samples,
                         dataset,
                         cmap=cmap,
                         filename=os.path.join(img_dir, f"samples_{step:06d}"),

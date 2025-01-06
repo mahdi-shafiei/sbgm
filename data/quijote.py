@@ -52,7 +52,7 @@ def get_quijote_labels() -> Array:
     return Q
 
 
-def quijote(key, n_pix, split=0.5):
+def quijote(key, n_pix, split=0.9):
     key_train, key_valid = jr.split(key)
 
     data_shape = (1, n_pix, n_pix)
@@ -65,32 +65,39 @@ def quijote(key, n_pix, split=0.5):
 
     min = X.min()
     max = X.max()
-    X = (X - min) / (max - min) # ... -> [0, 1]
+    # X = (X - min) / (max - min) # ... -> [0, 1]
+    # X = 2.0 * (X - min) / (max - min) - 1.0 # ... -> [-1, 1]
+    X = (X - X.mean()) / X.std()
 
     # min = Q.min()
     # max = Q.max()
     # Q = (Q - min) / (max - min) # ... -> [0, 1]
 
-    scaler = Scaler() # [0,1] -> [-1,1]
-
-    train_transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
-            transforms.Lambda(scaler.forward)
-        ]
-    )
-    valid_transform = transforms.Compose(
-        [transforms.Lambda(scaler.forward)]
-    )
-
     n_train = int(split * len(X))
-    train_dataset = MapDataset(
-        (X[:n_train], A[:n_train]), transform=train_transform
-    )
-    valid_dataset = MapDataset(
-        (X[n_train:], A[n_train:]), transform=valid_transform
-    )
+
+    # scaler = Scaler() # [0,1] -> [-1,1]
+
+    # train_transform = transforms.Compose(
+    #     [
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.RandomVerticalFlip(),
+    #         # transforms.Lambda(scaler.forward)
+    #     ]
+    # )
+    # valid_transform = transforms.Compose(
+    #     [
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.RandomVerticalFlip(),
+    #         # transforms.Lambda(scaler.forward)
+    #     ]
+    # )
+
+    # train_dataset = MapDataset(
+    #     (X[:n_train], A[:n_train]), transform=train_transform
+    # )
+    # valid_dataset = MapDataset(
+    #     (X[n_train:], A[n_train:]), transform=valid_transform
+    # )
     # train_dataloader = TorchDataLoader(
     #     train_dataset, 
     #     data_shape=data_shape, 
@@ -128,6 +135,6 @@ def quijote(key, n_pix, split=0.5):
         data_shape=data_shape,
         context_shape=context_shape,
         parameter_dim=parameter_dim,
-        scaler=scaler,
+        scaler=None, #scaler,
         label_fn=label_fn
     )
