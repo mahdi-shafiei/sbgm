@@ -4,10 +4,20 @@ import jax.numpy as jnp
 from jaxtyping import Key
 from torchvision import transforms, datasets
 
-from .utils import Scaler, ScalerDataset, TorchDataLoader
+from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
 
-def cifar10(path: str, key: Key) -> ScalerDataset:
+def convert_torch_to_in_memory(dataset):
+    # Convert torch cifar10 dataset to in-memory
+    data = jnp.asarray(dataset.data)
+    data = data.transpose(0, 3, 1, 2).astype(jnp.float32)
+    data = data / data.max()
+    targets = jnp.asarray(dataset.targets).astype(jnp.float32)
+    targets = targets[:, jnp.newaxis]
+    return data, targets
+
+
+def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
     key_train, key_valid = jr.split(key)
     n_pix = 32 # Native resolution for CIFAR10 
     data_shape = (3, n_pix, n_pix)
@@ -19,8 +29,7 @@ def cifar10(path: str, key: Key) -> ScalerDataset:
         [
             transforms.Resize((n_pix, n_pix)),
             transforms.RandomHorizontalFlip(),
-            # transforms.RandomVerticalFlip(),
-            transforms.ToTensor(), # This magically [0,255] -> [0,1]??
+            transforms.ToTensor(), 
             transforms.Lambda(scaler.forward) # [0,1] -> [-1,1]
         ]
     )
@@ -44,12 +53,18 @@ def cifar10(path: str, key: Key) -> ScalerDataset:
         transform=valid_transform
     )
 
-    train_dataloader = TorchDataLoader(
-        train_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_train
-    )
-    valid_dataloader = TorchDataLoader(
-        valid_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_valid
-    )
+    if in_memory:
+        Xt, At = convert_torch_to_in_memory(train_dataset) 
+        Xv, Av = convert_torch_to_in_memory(valid_dataset) 
+        train_dataloader = InMemoryDataLoader(X=Xt, A=At, key=key_train) 
+        valid_dataloader = InMemoryDataLoader(X=Xv, A=Av, key=key_valid) 
+    else:
+        train_dataloader = TorchDataLoader(
+            train_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_train
+        )
+        valid_dataloader = TorchDataLoader(
+            valid_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_valid
+        )
 
     def label_fn(key, n):
         Q = None
