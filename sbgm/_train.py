@@ -59,7 +59,7 @@ def single_loss_fn(
     noise = jr.normal(key_noise, x.shape)
     y = mean + std * noise
     y_ = model(t, y, q=q, a=a, key=key_apply) # Inference is true in validation
-    return sde.weight(t) * jnp.square(y_ + noise / std).mean()
+    return sde.weight(t) * jnp.mean(jnp.square(y_ + noise / std))
 
 
 def sample_time(
@@ -104,6 +104,7 @@ def make_step(
     replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
 ) -> Tuple[Array, Model, Key, optax.OptState]:
     model = eqx.nn.inference_mode(model, False)
+
     if replicated_sharding:
         model, opt_state = eqx.filter_shard((model, opt_state), replicated_sharding)
     if sharding:
@@ -132,8 +133,9 @@ def evaluate(
     replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
 ) -> Array:
     model = eqx.nn.inference_mode(model, True)
+
     if replicated_sharding:
-        model, opt_state = eqx.filter_shard((model, opt_state), replicated_sharding)
+        model = eqx.filter_shard(model, replicated_sharding)
     if sharding:
         x, q, a = eqx.filter_shard(xqa, sharding)
 
@@ -159,8 +161,8 @@ def train_from_config(
     # Reload optimiser or not
     reload_opt_state: bool = False,
     # Sharding of devices to run on
-    sharding: Optional[jax.sharding.Sharding] = None,
-    replicated_sharding: Optional[jax.sharding.Sharding] = None,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
@@ -190,8 +192,11 @@ def train_from_config(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the optimizer state and model from previous checkpoint files. Defaults to starting from scratch.
         
-        `sharding` : `Optional[jax.sharding.Sharding]`, default: `None`
-            Optional device sharding for distributed training across multiple devices.
+        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
+
+        `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards all model arrays across each device.
         
         `save_dir` : `Optional[str]`, default: `None`
             Directory path to save the model, optimizer state, and training figures. If `None`, a default directory is created.
@@ -259,8 +264,7 @@ def train_from_config(
 
     train_total_value = 0
     valid_total_value = 0
-    train_total_size = 0
-    valid_total_size = 0
+    total_size = 0
     train_losses = []
     valid_losses = []
 
@@ -289,8 +293,8 @@ def train_from_config(
             )
 
             train_total_value += _Lt.item()
-            train_total_size += 1
-            train_losses.append(train_total_value / train_total_size)
+            total_size += 1
+            train_losses.append(train_total_value / total_size)
 
             if config.use_ema:
                 ema_model = apply_ema(ema_model, model)
@@ -306,8 +310,7 @@ def train_from_config(
             )
 
             valid_total_value += _Lv.item()
-            valid_total_size += 1
-            valid_losses.append(valid_total_value / valid_total_size)
+            valid_losses.append(valid_total_value / total_size)
 
             steps.set_postfix(
                 {"Lt" : f"{train_losses[-1]:.3E}", "Lv" : f"{valid_losses[-1]:.3E}"}
@@ -433,8 +436,11 @@ def train(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the model and optimizer state from a previous checkpoint to continue training.
         
-        `sharding` : `Optional[jax.sharding.Sharding]`, default: `None`
-            Optional sharding scheme to distribute training across multiple devices.
+        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
+
+        `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards all model arrays across each device.
 
         `save_dir` : `Optional[str]`, default: `None`
             Directory path to save the model, optimizer state, and training logs. If `None`, a default path is generated.
@@ -502,8 +508,7 @@ def train(
 
     train_total_value = 0
     valid_total_value = 0
-    train_total_size = 0
-    valid_total_size = 0
+    total_size = 0
     train_losses = []
     valid_losses = []
 
@@ -532,8 +537,8 @@ def train(
             )
 
             train_total_value += _Lt.item()
-            train_total_size += 1
-            train_losses.append(train_total_value / train_total_size)
+            total_size += 1
+            train_losses.append(train_total_value / total_size)
 
             if use_ema:
                 ema_model = apply_ema(ema_model, model)
@@ -549,8 +554,7 @@ def train(
             )
 
             valid_total_value += _Lv.item()
-            valid_total_size += 1
-            valid_losses.append(valid_total_value / valid_total_size)
+            valid_losses.append(valid_total_value / total_size)
 
             steps.set_postfix(
                 {"Lt" : f"{train_losses[-1]:.3E}", "Lv" : f"{valid_losses[-1]:.3E}"}

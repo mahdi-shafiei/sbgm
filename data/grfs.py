@@ -9,7 +9,7 @@ import torch
 from torchvision import transforms
 import powerbox
 
-from .utils import Scaler, ScalerDataset, TorchDataLoader
+from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
 data_dir = "/project/ls-gruen/users/jed.homer/data/fields/"
 
@@ -105,7 +105,7 @@ def grfs(key, n_pix, split=0.5):
 
     Q, X, A = get_data(key_data, n_pix) 
 
-    print("Fields data:", X.shape, Q.shape)
+    print("\nFields data:", X.shape, Q.shape)
 
     min = X.min()
     max = X.max()
@@ -129,22 +129,22 @@ def grfs(key, n_pix, split=0.5):
     )
 
     n_train = int(split * len(X))
-    train_dataset = MapDataset(
-        (X[:n_train], Q[:n_train], A[:n_train]), transform=train_transform
-    )
-    valid_dataset = MapDataset(
-        (X[n_train:], Q[n_train:], A[n_train:]), transform=valid_transform
-    )
-    train_dataloader = TorchDataLoader(train_dataset, key=key_train)
-    valid_dataloader = TorchDataLoader(valid_dataset, key=key_valid)
+    # train_dataset = MapDataset(
+    #     (X[:n_train], Q[:n_train], A[:n_train]), transform=train_transform
+    # )
+    # valid_dataset = MapDataset(
+    #     (X[n_train:], Q[n_train:], A[n_train:]), transform=valid_transform
+    # )
+    # train_dataloader = TorchDataLoader(train_dataset, key=key_train)
+    # valid_dataloader = TorchDataLoader(valid_dataset, key=key_valid)
 
     # Don't have many maps
-    # train_dataloader = _InMemoryDataLoader(
-    #     data=X[:n_train], targets=Q[:n_train], key=key_train
-    # )
-    # valid_dataloader = _InMemoryDataLoader(
-    #     data=X[n_train:], targets=Q[n_train:], key=key_valid
-    # )
+    train_dataloader = InMemoryDataLoader(
+        X=X[:n_train], Q=Q[:n_train], A=A[:n_train], key=key_train
+    )
+    valid_dataloader = InMemoryDataLoader(
+        X=X[n_train:], Q=Q[n_train:], A=A[n_train:], key=key_valid
+    )
 
     def label_fn(key, n):
         Q, A = get_grf_labels(n_pix)
