@@ -10,7 +10,7 @@ def test_resnet():
     key = jr.key(0)
 
     x = jnp.ones((5,))
-    t = jnp.ones((1,))
+    t = jnp.ones(())
 
     a = jnp.ones((3,))
     q = None
@@ -79,7 +79,7 @@ def test_mixer():
     key = jr.key(0)
 
     x = jnp.ones((1, 32, 32))
-    t = jnp.ones((1,))
+    t = jnp.ones(())
 
     q = jnp.ones((1, 32, 32))
     a = jnp.ones((5,))
@@ -179,24 +179,30 @@ def test_unet():
 
     key = jr.key(0)
 
+    hidden_size = 32
+    n_channels = 1
+    dim_mults = (1, 1)
+    heads = 2
+    dim_head = 32
+    dropout_rate = 0.0
+
     x = jnp.ones((1, 32, 32))
-    t = jnp.ones((1,))
+    t = jnp.ones(())
 
     q_dim = 1
     a_dim = 2
 
     unet = UNet(
-        x.shape,
-        is_biggan=False,
-        dim_mults=[1, 1, 1],
-        hidden_size=32,
-        heads=2,
-        dim_head=32,
-        dropout_rate=0.1,
-        num_res_blocks=2,
-        attn_resolutions=[8, 16, 32],
-        q_dim=q_dim,
-        a_dim=a_dim,
+        dim=hidden_size,
+        channels=n_channels,
+        dim_mults=dim_mults,
+        attn_heads=heads,
+        attn_dim_head=dim_head,
+        dropout=dropout_rate,
+        learned_sinusoidal_cond=True,
+        random_fourier_features=True,
+        a_dim=a_dim, 
+        q_channels=q_dim,
         key=key
     )
 
@@ -210,17 +216,16 @@ def test_unet():
     a_dim = None
 
     unet = UNet(
-        x.shape,
-        is_biggan=False,
-        dim_mults=[1, 1, 1],
-        hidden_size=32,
-        heads=2,
-        dim_head=32,
-        dropout_rate=0.1,
-        num_res_blocks=2,
-        attn_resolutions=[8, 16, 32],
-        q_dim=q_dim,
-        a_dim=a_dim,
+        dim=hidden_size,
+        channels=n_channels,
+        dim_mults=dim_mults,
+        attn_heads=heads,
+        attn_dim_head=dim_head,
+        dropout=dropout_rate,
+        learned_sinusoidal_cond=True,
+        random_fourier_features=True,
+        a_dim=a_dim, 
+        q_channels=q_dim,
         key=key
     )
     
@@ -231,17 +236,16 @@ def test_unet():
     a_dim = None
 
     unet = UNet(
-        x.shape,
-        is_biggan=False,
-        dim_mults=[1, 1, 1],
-        hidden_size=32,
-        heads=2,
-        dim_head=32,
-        dropout_rate=0.1,
-        num_res_blocks=2,
-        attn_resolutions=[8, 16, 32],
-        q_dim=q_dim,
-        a_dim=a_dim,
+        dim=hidden_size,
+        channels=n_channels,
+        dim_mults=dim_mults,
+        attn_heads=heads,
+        attn_dim_head=dim_head,
+        dropout=dropout_rate,
+        learned_sinusoidal_cond=True,
+        random_fourier_features=True,
+        a_dim=a_dim, 
+        q_channels=q_dim,
         key=key
     )
     
@@ -254,17 +258,16 @@ def test_unet():
     a_dim = 2 
 
     unet = UNet(
-        x.shape,
-        is_biggan=False,
-        dim_mults=[1, 1, 1],
-        hidden_size=32,
-        heads=2,
-        dim_head=32,
-        dropout_rate=0.1,
-        num_res_blocks=2,
-        attn_resolutions=[8, 16, 32],
-        q_dim=q_dim,
-        a_dim=a_dim,
+        dim=hidden_size,
+        channels=n_channels,
+        dim_mults=dim_mults,
+        attn_heads=heads,
+        attn_dim_head=dim_head,
+        dropout=dropout_rate,
+        learned_sinusoidal_cond=True,
+        random_fourier_features=True,
+        a_dim=a_dim, 
+        q_channels=q_dim,
         key=key
     )
     

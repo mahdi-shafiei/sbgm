@@ -124,7 +124,7 @@ def log_likelihood(
     key: Key[jnp.ndarray, "..."] | None, 
     model: eqx.Module, 
     sde: SDE,
-    data_shape: Tuple[int], 
+    data_shape: Sequence[int], 
     x: Float[Array, "..."], 
     q: Optional[Float[Array, "..."]] = None, 
     a: Optional[Float[Array, "..."]] = None, 
