@@ -9,7 +9,8 @@ import jax.numpy as jnp
 import jax.random as jr 
 import equinox as eqx
 import equinox as eqx
-from jaxtyping import Key, PRNGKeyArray, Array 
+from jaxtyping import Key, Array, Float, jaxtyped
+from beartype import beartype as typechecker
 
 import numpy as np
 from einops import einsum, rearrange, repeat
@@ -172,7 +173,7 @@ class Block(eqx.Module):
         self, 
         x: Array, 
         scale_shift: Tuple[Array, Array] = None, 
-        key: Optional[PRNGKeyArray] = None
+        key: Optional[Key] = None
     ) -> Array:
         x = self.proj(x)
         x = self.norm(x)
@@ -214,7 +215,7 @@ class ResnetBlock(eqx.Module):
         x: Array, 
         time_emb: Optional[Array] = None, 
         *, 
-        key: PRNGKeyArray
+        key: Key 
     ) -> Array:
         keys = key_split_allowing_none(key)
 
@@ -392,12 +393,16 @@ class UNet(eqx.Module):
     final_res_block: ResnetBlock
     final_conv: eqx.nn.Conv2d
 
+    q_channels: int
+    a_dim: int
+
+    @jaxtyped(typechecker=typechecker)
     def __init__(
         self,
         dim: int,
         init_dim: Optional[int] = None,
         out_dim: Optional[int] = None,
-        dim_mults: Tuple[int, ...] = (1, 2, 4, 8),
+        dim_mults: Sequence[int, ...] = (1, 2, 4, 8),
         channels: int = 1,
         q_channels: Optional[int] = None,
         a_dim: Optional[int] = None,
@@ -412,13 +417,15 @@ class UNet(eqx.Module):
         full_attn: bool = False , # Defaults to full attention only for inner most layer
         flash_attn: bool = False,
         *,
-        key: Key
+        key: Key[jnp.ndarray, "..."]
     ):
         key_modules, key_down, key_mid, key_up, key_final = jr.split(key, 5)
         keys = jr.split(key_modules, 3)
 
         # Determine dimensions
         self.channels = channels
+        self.q_channels = q_channels
+        self.a_dim = a_dim
 
         init_dim = default(init_dim, dim)
         self.init_conv = eqx.nn.Conv2d(
@@ -536,7 +543,9 @@ class UNet(eqx.Module):
                         heads=layer_attn_heads, 
                         key=keys[2]
                     ),
-                    Upsample(dim_out, dim_in, key=keys[3]) if not is_last else eqx.nn.Conv2d(
+                    Upsample(dim_out, dim_in, key=keys[3]) 
+                    if not is_last else 
+                    eqx.nn.Conv2d(
                         dim_out, dim_in, kernel_size=3, padding=1, key=keys[3]
                     )
                 ]
@@ -558,14 +567,15 @@ class UNet(eqx.Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
+    @jaxtyped(typechecker=typechecker)
     def __call__(
         self, 
-        t: Array, 
-        x: Array, 
-        q: Optional[Array] = None, 
-        a: Optional[Array] = None, 
-        key: PRNGKeyArray = None
-    ) -> Array:
+        t: Float[Array, ""], 
+        x: Float[Array, "{self.channels} _ _"], 
+        q: Optional[Float[Array, "{self.q_channels} _ _"]] = None, 
+        a: Optional[Float[Array, "{self.a_dim}"]] = None, 
+        key: Optional[Key[jnp.ndarray, "..."]] = None
+    ) -> Float[Array, "{self.channels} _ _"]:
         assert all(
             [divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]
         ), (

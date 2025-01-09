@@ -73,7 +73,10 @@ def _samples_onto_ax(_X, fig, ax, vs, cmap):
     """ Drop a sample _X onto an ax by gridding it first """
     _, c, img_size, _ = _X.shape
     img = _add_spacing(_imgs_to_grid(_X), img_size)
-    im = ax.imshow(img, cmap=cmap)
+    im = ax.imshow(
+        jnp.clip(img, min=0., max=1.) if c == 3 else img, 
+        cmap=cmap
+    )
     ax.axis("off")
     # If only one channel, use colorbar
     if c == 1:
@@ -93,8 +96,8 @@ def plot_model_sample(eu_sample, ode_sample, dataset, cmap, filename):
         plt.close()
 
     def rescale(sample):
-        if dataset.scaler is not None:
-            sample = dataset.scaler.reverse(sample) 
+        if dataset.process_fn is not None:
+            sample = dataset.process_fn.reverse(sample) 
             sample = jnp.clip(sample, 0., 1.) 
         return sample
 
@@ -112,8 +115,8 @@ def plot_model_sample(eu_sample, ode_sample, dataset, cmap, filename):
 def plot_train_sample(dataset, sample_size, vs, cmap, filename):
     # Unscale data from dataloader (ignoring parameters)
     X, Q, A = next(dataset.train_dataloader.loop(sample_size ** 2))
-    if dataset.scaler is not None:
-        X = dataset.scaler.reverse(X)[:sample_size ** 2]
+    if dataset.process_fn is not None:
+        X = dataset.process_fn.reverse(X)[:sample_size ** 2]
 
     fig, ax = plt.subplots(dpi=300)
     _samples_onto_ax(X, fig, ax, vs, cmap)

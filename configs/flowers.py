@@ -45,6 +45,8 @@ def flowers_config():
     config.n_steps               = 1_000_000
     config.lr                    = 1e-4
     config.batch_size            = 16
+    config.accumulate_gradients  = False
+    config.n_minibatches         = 1
     config.sample_and_save_every = 1_000
     config.opt                   = "adabelief"
     config.opt_kwargs            = {}

@@ -42,13 +42,15 @@ def mnist(path:str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         os.path.join(path, "datasets/mnist/"), 
         train=True, 
         download=True, 
-        transform=train_transform
+        transform=train_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
     valid_dataset = datasets.MNIST(
         os.path.join(path, "datasets/mnist/"), 
         train=False, 
         download=True, 
-        transform=valid_transform
+        transform=valid_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
 
     if in_memory:
@@ -78,7 +80,8 @@ def mnist(path:str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
 
     def label_fn(key, n):
         Q = None
-        A = jr.choice(key, jnp.arange(10), (n,))[:, jnp.newaxis]
+        A = jr.choice(key, jnp.arange(10), (n,))
+        A = A[:, jnp.newaxis].astype(jnp.float32)
         return Q, A
 
     return ScalerDataset(
@@ -88,6 +91,6 @@ def mnist(path:str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         data_shape=data_shape,
         context_shape=None,
         parameter_dim=parameter_dim,
-        scaler=scaler,
+        process_fn=scaler,
         label_fn=label_fn
     )

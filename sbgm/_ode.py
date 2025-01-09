@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
 import diffrax as dfx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, jaxtyped
+from beartype import beartype as typechecker
 
 from .sde._sde import SDE
 
@@ -14,18 +15,32 @@ def get_solver() -> dfx.AbstractSolver:
 
 
 def log_prob_approx(
-    t: Union[float, Array], 
-    y: Array, 
-    args: Tuple[Array, Array, Array, eqx.Module, Sequence[int]]
-) -> Tuple[Array, Array]:
+    t: Union[float, Float[Array, ""]], 
+    y: Float[Array, "..."], 
+    args: Tuple[
+        Float[Array, "..."], 
+        Optional[Float[Array, "..."]], 
+        Optional[Float[Array, "..."]], 
+        Callable[
+            [
+                Float[Array, "..."], 
+                Float[Array, ""], 
+                Optional[Float[Array, "..."]], 
+                Optional[Float[Array, "..."]]
+            ], 
+            Float[Array, "..."]
+        ],
+        Sequence[int]
+    ]
+) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
     """ 
         Approx. trace using Hutchinson's trace estimator. 
         - optional multiple-eps sample to average estimated log_prob over
     """
     y, _ = y 
-    eps, q, a, func, data_shape = args 
+    eps, q, a, ode, data_shape = args 
     
-    fn = lambda y: func(y.reshape(data_shape), t, q, a)
+    fn = lambda y: ode(y.reshape(data_shape), t, q, a)
     f, f_vjp = jax.vjp(fn, y) # f = f(*primals)
     
     # Expectation over multiple eps
@@ -44,17 +59,31 @@ def log_prob_approx(
 
 
 def log_prob_exact(
-    t: Union[float, Array], 
-    y: Array, 
-    args: Tuple[None, Array, Array, eqx.Module, Sequence[int]]
-) -> Tuple[Array, Array]:
+    t: Union[float, Float[Array, ""]], 
+    y: Float[Array, "..."], 
+    args: Tuple[
+        None, 
+        Optional[Float[Array, "..."]], 
+        Optional[Float[Array, "..."]], 
+        Callable[
+            [
+                Float[Array, "..."], 
+                Float[Array, ""], 
+                Optional[Float[Array, "..."]], 
+                Optional[Float[Array, "..."]]
+            ], 
+            Float[Array, "..."]
+        ],
+        Sequence[int]
+    ]
+) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
     """ 
         Compute trace directly. 
     """
     y, _ = y
-    _, q, a, func, data_shape = args
+    _, q, a, ode, data_shape = args
 
-    fn = lambda y: func(y.reshape(data_shape), t, q, a)
+    fn = lambda y: ode(y.reshape(data_shape), t, q, a)
     f, f_vjp = jax.vjp(fn, y)  
 
     (dfdy,) = jax.vmap(f_vjp)(jnp.eye(y.size)) 
@@ -63,35 +92,46 @@ def log_prob_exact(
     return f, log_prob
 
 
-def get_ode(model: eqx.Module, sde: SDE) -> Callable:
-
+def get_ode(
+    model: eqx.Module, 
+    sde: SDE
+) -> Callable[
+    [
+        Float[Array, "..."], 
+        Float[Array, ""], 
+        Optional[Float[Array, "..."]], 
+        Optional[Float[Array, "..."]]
+    ], 
+    Float[Array, "..."]
+]:
     reverse_sde = sde.reverse(model, probability_flow=True)
 
     def ode(
-        y: Array, 
-        t: Union[float, Array], 
+        y: Float[Array, "..."], 
+        t: Union[float, Float[Array, ""]], 
         q: Optional[Array] = None, 
         a: Optional[Array] = None
-    ) -> Array:
+    ) -> Float[Array, "..."]:
         drift, _ = reverse_sde.sde(y, t, q, a)
         return drift.flatten()
 
     return ode
 
 
+@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
 def log_likelihood(
-    key: Key, 
+    key: Key[jnp.ndarray, "..."] | None, 
     model: eqx.Module, 
     sde: SDE,
     data_shape: Tuple[int], 
-    x: Array, 
-    q: Optional[Array] = None, 
-    a: Optional[Array] = None, 
+    x: Float[Array, "..."], 
+    q: Optional[Float[Array, "..."]] = None, 
+    a: Optional[Float[Array, "..."]] = None, 
     exact_logp: bool = False,
     n_eps: Optional[int] = 10,
     solver: Optional[dfx.AbstractSolver] = None
-) -> Tuple[Array, Array]:
+) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
     """
         Computes the log-likelihood of data by solving an ordinary differential equation (ODE) 
         related to the reverse SDE paramterised with a score network. The function supports exact 
@@ -183,11 +223,12 @@ def log_likelihood(
         # adjoint=dfx.DirectAdjoint()
     ) 
     (z,), (delta_log_likelihood,) = sol.ys
-    p_z = sde.prior_log_prob(z).sum()
+    p_z = sde.prior_log_prob(z)
     log_p_x = p_z + delta_log_likelihood 
     return z, log_p_x
 
 
+@jaxtyped(typechecker=typechecker)
 def get_log_likelihood_fn(
     model: eqx.Module, 
     sde: SDE, 
@@ -195,7 +236,14 @@ def get_log_likelihood_fn(
     exact_logp: bool = False,
     n_eps: Optional[int] = None,
     solver: Optional[dfx.AbstractSolver] = None
-) -> Callable:
+) -> Callable[
+    [
+        Float[Array, "..."], 
+        Optional[Float[Array, "..."]], 
+        Optional[Float[Array, "..."]], 
+    ],
+    Float[Array, ""]
+]:
     """
         Returns a parameterized log-likelihood function that computes the log-likelihood 
         of input data based on the provided model and stochastic differential equation (SDE).
@@ -255,12 +303,14 @@ def get_log_likelihood_fn(
             '''
         ```
     """
+
+    @jaxtyped(typechecker=typechecker)
     def _log_likelihood_fn(
-        x: Array, 
-        q: Optional[Array] = None, 
-        a: Optional[Array] = None, 
-        key: Optional[Key] = None
-    ) -> Array:
+        x: Float[Array, "..."], 
+        q: Optional[Float[Array, "..."]] = None, 
+        a: Optional[Float[Array, "..."]] = None, 
+        key: Optional[Key[jnp.ndarray, "..."]] = None
+    ) -> Float[Array, ""]:
         """
             Computes the log-likelihood of input data `x` using a score-based model and stochastic 
             differential equation (SDE), optionally conditioned on `q` and `a`.

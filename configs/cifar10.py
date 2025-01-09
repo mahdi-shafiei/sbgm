@@ -30,7 +30,7 @@ def cifar10_config():
     sde.t0                       = 1e-5 
     sde.dt                       = 0.1
     sde.beta_integral            = lambda t: t 
-    sde.weight_fn                = lambda t: 1. - jnp.exp(-sde.beta_integral(t)) 
+    sde.weight_fn                = lambda t: 1. - jnp.exp(-sde.beta_integral(t))
 
     # Sampling
     config.use_ema               = False
@@ -43,6 +43,8 @@ def cifar10_config():
     config.start_step            = 0
     config.n_steps               = 1_000_000
     config.batch_size            = 512 
+    config.accumulate_gradients  = False
+    config.n_minibatches         = 1
     config.sample_and_save_every = 1_000
     config.lr                    = 1e-4
     config.opt                   = "adabelief"

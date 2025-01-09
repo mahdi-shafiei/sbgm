@@ -1,16 +1,17 @@
-from typing import Callable, Optional, Union, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, jaxtyped
+from beartype import beartype as typechecker
 
-from ._sde import SDE, _get_log_prob_fn
+from ._sde import SDE, _get_log_prob_fn, Time, TimeFn
 
 
-def get_beta_fn(beta_integral_fn: Union[Callable, eqx.Module]) -> Callable:
-    """ Obtain beta function from a beta beta integral. """
-    def _beta_fn(t):
+def get_beta_fn(beta_integral_fn: TimeFn | eqx.Module) -> TimeFn:
+    """ Obtain beta function from a beta integral. """
+    def _beta_fn(t: Time) -> Float[Array, ""]:
         _, beta = jax.jvp(
             beta_integral_fn, 
             primals=(t,), 
@@ -22,14 +23,15 @@ def get_beta_fn(beta_integral_fn: Union[Callable, eqx.Module]) -> Callable:
 
 
 class VPSDE(SDE):
-    beta_integral_fn: Callable
-    beta_fn: Callable
-    weight_fn: Callable
+    beta_integral_fn: TimeFn | eqx.Module 
+    beta_fn: TimeFn 
+    weight_fn: TimeFn
 
+    @jaxtyped(typechecker=typechecker)
     def __init__(
         self, 
-        beta_integral_fn: Callable, 
-        weight_fn: Optional[Callable] = None, 
+        beta_integral_fn: TimeFn, 
+        weight_fn: Optional[TimeFn] = None, 
         dt: float = 0.1, 
         t0: float = 0., 
         t1: float = 1.
@@ -44,7 +46,8 @@ class VPSDE(SDE):
         self.beta_fn = get_beta_fn(beta_integral_fn)
         self.weight_fn = weight_fn
 
-    def sde(self, x: Array, t: Array) -> Tuple[Array, Array]:
+    @jaxtyped(typechecker=typechecker)
+    def sde(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
         """ 
             dx = f(x, t) * dt + g(t) * dw 
             dx = -0.5 * beta(t) * x * dt + sqrt(beta(t)) * dw
@@ -54,7 +57,8 @@ class VPSDE(SDE):
         diffusion = jnp.sqrt(beta_t)
         return drift, diffusion
 
-    def marginal_prob(self, x: Array, t: Array) -> Tuple[Array, Array]:
+    @jaxtyped(typechecker=typechecker)
+    def marginal_prob(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
         """ 
             VP SDE p_t(x(t)|x(0)) is
                 x(t) ~ G[x(t)|mu(x(0), t), sigma^2(t)] 
@@ -67,7 +71,8 @@ class VPSDE(SDE):
         std = jnp.sqrt(-jnp.expm1(-beta_integral)) 
         return mean, std
 
-    def weight(self, t: Array, likelihood_weight: bool = False) -> Array:
+    @jaxtyped(typechecker=typechecker)
+    def weight(self, t: Time, likelihood_weight: bool = False) -> Float[Array, ""]:
         # likelihood weighting: above Eq 8 https://arxiv.org/pdf/2101.09258.pdf
         if self.weight_fn is not None and not likelihood_weight:
             weight = self.weight_fn(t)
@@ -78,8 +83,8 @@ class VPSDE(SDE):
                 weight = -jnp.expm1(-self.beta_integral_fn(t))
         return weight
 
-    def prior_sample(self, key: Key, shape: Sequence[int]) -> Array:
+    def prior_sample(self, key: Key[jnp.ndarray, "..."], shape: Sequence[int]) -> Float[Array, "..."]:
         return jr.normal(key, shape)
 
-    def prior_log_prob(self, z: Array) -> Array:
+    def prior_log_prob(self, z: Float[Array, "..."]) -> Float[Array, ""]:
         return _get_log_prob_fn(scale=1.)(z)

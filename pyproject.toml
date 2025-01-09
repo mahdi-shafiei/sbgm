@@ -1,6 +1,6 @@
 [project]
 name = "sbgm"
-version = "0.0.17"
+version = "0.0.18"
 description = "Score-based Diffusion models in JAX."
 readme = "README.md"
 requires-python ="~=3.12"
@@ -26,20 +26,20 @@ classifiers = [
 urls = {repository = "https://github.com/homerjed/sbgm"}
 
 dependencies = [
-    'jax>=0.4.33',
-    'equinox>=0.11.7',
-    'diffrax>=0.6.0',
-    'optax>=0.2.3',
-    'beartype',
+    'jax==0.4.33',
+    'equinox==0.11.7',
+    'diffrax==0.6.0',
+    'optax==0.2.3',
+    'beartype==0.19.0',
     'ml_collections',
-    'numpy',
-    'matplotlib',
+    'numpy==1.26.4',
+    'matplotlib==3.9.1',
     'einops>=0.8.0',
-    'torch>=2.0',
-    'torchvision',
-    'cloudpickle',
-    'tqdm',
-    'powerbox'
+    'torch==2.4.0',
+    'torchvision==0.19.0',
+    'cloudpickle==3.0.0',
+    'tqdm==4.66.4',
+    'powerbox==0.8.1'
 ]
 
 [build-system]

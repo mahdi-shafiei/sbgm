@@ -4,20 +4,22 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, jaxtyped
+from beartype import beartype as typechecker
 
 from .sde import SDE
 from ._ode import get_solver
 
 
+@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
 def single_ode_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
     data_shape: Sequence[int], 
-    key: Key,
-    q: Optional[Array] = None,
-    a: Optional[Array] = None,
+    key: Key[jnp.ndarray, ""],
+    q: Optional[Float[Array, "..."]] = None,
+    a: Optional[Float[Array, "..."]] = None,
     solver: Optional[dfx.AbstractSolver] = None
 ) -> Array:
     """
@@ -93,14 +95,15 @@ def single_ode_sample_fn(
     return sol.ys[0]
 
 
+@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
 def single_eu_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
     data_shape: Sequence[int], 
-    key: Key, 
-    q: Optional[Array] = None,
-    a: Optional[Array] = None,
+    key: Key[jnp.ndarray, ""], 
+    q: Optional[Float[Array, "..."]] = None,
+    a: Optional[Float[Array, "..."]] = None,
     T_sample: int = 1_000
 ) -> Array:
     """
@@ -246,8 +249,8 @@ def get_eu_sample_fn(
     """
     def _eu_sample_fn(
         key: Key, 
-        q: Optional[Array] = None, 
-        a: Optional[Array] = None
+        q: Optional[Float[Array, "..."]] = None, 
+        a: Optional[Float[Array, "..."]] = None, 
     ) -> Array: 
         return single_eu_sample_fn(
             model, sde, data_shape, key, q, a, T_sample
@@ -304,8 +307,8 @@ def get_ode_sample_fn(
     """
     def _ode_sample_fn(
         key: Key, 
-        q: Optional[Array] = None, 
-        a: Optional[Array] = None
+        q: Optional[Float[Array, "..."]] = None, 
+        a: Optional[Float[Array, "..."]] = None, 
     ) -> Array:
         return single_ode_sample_fn(
             model, sde, data_shape, key, q, a, solver

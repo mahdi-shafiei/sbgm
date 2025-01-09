@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from jaxtyping import Key
 from torchvision import transforms, datasets
 
-from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
+from .utils import Scaler, Normer, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
 
 def convert_torch_to_in_memory(dataset):
@@ -19,9 +19,11 @@ def convert_torch_to_in_memory(dataset):
 
 def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
     key_train, key_valid = jr.split(key)
+
     n_pix = 32 # Native resolution for CIFAR10 
     data_shape = (3, n_pix, n_pix)
     parameter_dim = 1
+    n_classes = 10
 
     scaler = Scaler(x_min=0., x_max=1.)
 
@@ -44,31 +46,46 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         os.path.join(path, "datasets/cifar10/"),
         train=True, 
         download=True, 
-        transform=train_transform
+        transform=train_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
     valid_dataset = datasets.CIFAR10(
         os.path.join(path, "datasets/cifar10/"),
         train=False, 
         download=True, 
-        transform=valid_transform
+        transform=valid_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
+
 
     if in_memory:
         Xt, At = convert_torch_to_in_memory(train_dataset) 
         Xv, Av = convert_torch_to_in_memory(valid_dataset) 
-        train_dataloader = InMemoryDataLoader(X=Xt, A=At, key=key_train) 
-        valid_dataloader = InMemoryDataLoader(X=Xv, A=Av, key=key_valid) 
+
+        At = At.astype(jnp.float32)
+        Av = Av.astype(jnp.float32)
+
+        process_fn = Scaler(x_min=Xt.min(), x_max=Xt.max())
+
+        train_dataloader = InMemoryDataLoader(
+            X=Xt, A=At, process_fn=process_fn, key=key_train) 
+        valid_dataloader = InMemoryDataLoader(
+            X=Xv, A=Av, process_fn=process_fn, key=key_valid
+        ) 
     else:
+        process_fn = Scaler(x_min=0., x_max=1.)
+
         train_dataloader = TorchDataLoader(
-            train_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_train
+            train_dataset, data_shape, parameter_dim=parameter_dim, key=key_train
         )
         valid_dataloader = TorchDataLoader(
-            valid_dataset, data_shape, context_shape=None, parameter_dim=parameter_dim, key=key_valid
+            valid_dataset, data_shape, parameter_dim=parameter_dim, key=key_valid
         )
 
     def label_fn(key, n):
         Q = None
-        A = jr.choice(key, jnp.arange(10), (n,))[:, jnp.newaxis]
+        A = jr.choice(key, jnp.arange(n_classes), (n,))
+        A = A[:, jnp.newaxis].astype(jnp.float32)
         return Q, A
 
     return ScalerDataset(
@@ -78,6 +95,6 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         data_shape=data_shape,
         parameter_dim=parameter_dim,
         context_shape=None,
-        scaler=scaler,
+        process_fn=process_fn, 
         label_fn=label_fn
     )
