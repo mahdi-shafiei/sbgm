@@ -2,7 +2,15 @@ from typing import Sequence, Tuple, Self, Callable, Optional, Union
 import jax
 import jax.numpy as jnp
 import equinox as eqx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, jaxtyped
+
+TimeFn = Callable[[float | Float[Array, ""]], Float[Array, ""]]
+Time = Float[Array, ""] | float
+
+
+def default_weight_fn(t, *, beta_integral=None, sigma_fn=None): 
+    assert not ((beta_integral is not None) and (sigma_fn is not None))
+    return 1. - jnp.exp(-beta_integral(t))
 
 
 class SDE(eqx.Module):
@@ -79,11 +87,11 @@ class SDE(eqx.Module):
 
             def sde(
                 self, 
-                x: Array, 
-                t: Union[float, Array], 
-                q: Optional[Array] = None,
-                a: Optional[Array] = None
-            ) -> Tuple[Array, Array]:
+                x: Float[Array, "..."], 
+                t: Time, 
+                q: Optional[Float[Array, "..."]] = None,
+                a: Optional[Float[Array, "..."]] = None
+            ) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
                 """ 
                     Create the drift and diffusion functions for the reverse SDE/ODE. 
                     - forward time SDE:
@@ -93,6 +101,7 @@ class SDE(eqx.Module):
                     - ode of SDE:
                         dx = [f(x, t) - 0.5 * g^2(t) * score(x, t)] * dt (ODE => No dw)
                 """
+                t = jnp.asarray(t)
                 coeff = 0.5 if self.probability_flow else 1.
                 drift, diffusion = sde_fn(x, t)
                 score = score_fn(t, x, q, a)

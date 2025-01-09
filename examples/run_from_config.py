@@ -10,25 +10,30 @@ def main():
         Fit a score-based diffusion model.
     """
 
+    # Load (data) and save (model, samples & optimiser state) directories 
     datasets_path = "../datasets/"
     root_dir = "./"
 
+    # Config file for architecture and optimisation
     config = [
-        configs.mnist_config(),
+        configs.mnist_config(), 
         configs.grfs_config(),
         configs.flowers_config(),
         configs.cifar10_config(),
-        configs.quijote_config()
-    ][-1]
+        configs.quijote_config() 
+    ][3]
 
     key = jr.key(config.seed)
     data_key, model_key, train_key = jr.split(key, 3)
 
-    dataset = data.get_dataset(
-        datasets_path, data_key, config
-    )
-    sharding = sbgm.shard.get_sharding()
-    reload_opt_state = False # Restart training or not
+    # Dataset object of training data and loaders
+    dataset = data.get_dataset(datasets_path, data_key, config)
+
+    # Multiple GPU training if you are so inclined
+    sharding, replicated_sharding = sbgm.shard.get_shardings()
+
+    # Restart training or not
+    reload_opt_state = False 
         
     # Diffusion model 
     model = sbgm.models.get_model(
@@ -53,6 +58,7 @@ def main():
         reload_opt_state=reload_opt_state,
         plot_train_data=True,
         sharding=sharding,
+        replicated_sharding=replicated_sharding,
         save_dir=root_dir
     )
 

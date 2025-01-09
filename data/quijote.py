@@ -135,6 +135,6 @@ def quijote(key, n_pix, split=0.9):
         data_shape=data_shape,
         context_shape=context_shape,
         parameter_dim=parameter_dim,
-        scaler=None, #scaler,
+        process_fn=None, #scaler,
         label_fn=label_fn
     )

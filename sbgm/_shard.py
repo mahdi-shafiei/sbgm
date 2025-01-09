@@ -1,30 +1,22 @@
-from typing import Tuple, Optional
+from typing import Tuple
 import jax
-from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
-import equinox as eqx
-from jaxtyping import Array
+from jax.experimental import mesh_utils
 
 
-def get_sharding():
-    n_devices = len(jax.local_devices())
-    print(f"Running on {n_devices} local devices: \n\t{jax.local_devices()}")
+def get_shardings() -> Tuple[jax.sharding.PositionalSharding | None, jax.sharding.NamedSharding | None]:
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    print(f"Running on {n_devices} local devices: \n\t{devices}")
 
-    use_sharding = n_devices > 1
-    # Sharding mesh: speed and allow training on high resolution?
-    if use_sharding:
-        # Split array evenly across data dimensions, this reshapes automatically
-        mesh = Mesh(jax.devices(), ('x',))
-        sharding = NamedSharding(mesh, P('x'))
+    if n_devices > 1:
+        mesh = jax.sharding.Mesh(devices, ('x',))
+        sharding = jax.sharding.NamedSharding(
+            mesh, spec=jax.sharding.PartitionSpec('x')
+        )
+
+        devices = mesh_utils.create_device_mesh((n_devices, 1))
+        replicated = jax.sharding.PositionalSharding(devices).replicate()
     else:
-        sharding = None
-    print(f"Sharding:\n {sharding}")
-    return sharding
+        sharding = replicated = None
 
-
-def shard_batch(
-    batch: Tuple[Array, ...], 
-    sharding: Optional[NamedSharding] = None
-) -> Tuple[Array, ...]:
-    if sharding:
-        batch = eqx.filter_shard(batch, sharding)
-    return batch
+    return sharding, replicated

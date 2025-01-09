@@ -38,18 +38,17 @@ def get_model(
             key=model_key
         )
     if model_type == "UNet":
+        n_channels, *_ = data_shape
         model = UNet(
-            data_shape=data_shape,
-            is_biggan=config.model.is_biggan,
+            dim=config.model.hidden_size,
+            channels=n_channels,
             dim_mults=config.model.dim_mults,
-            hidden_size=config.model.hidden_size,
-            heads=config.model.heads,
-            dim_head=config.model.dim_head,
-            dropout_rate=config.model.dropout_rate,
-            num_res_blocks=config.model.num_res_blocks,
-            attn_resolutions=config.model.attn_resolutions,
-            final_activation=config.model.final_activation,
-            q_dim=context_channels, 
+            attn_heads=config.model.heads,
+            attn_dim_head=config.model.dim_head,
+            dropout=config.model.dropout_rate,
+            learned_sinusoidal_cond=True,
+            random_fourier_features=True,
+            q_channels=context_channels,
             a_dim=parameter_dim,
             key=model_key
         )
@@ -62,7 +61,7 @@ def get_model(
             dropout_p=config.model.dropout_p,
             q_dim=context_channels,
             a_dim=parameter_dim,
-            t1=config.t1,
+            t1=config.sde.t1,
             key=model_key
         )
     if model_type == "CCT":

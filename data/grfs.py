@@ -9,7 +9,7 @@ import torch
 from torchvision import transforms
 import powerbox
 
-from .utils import Scaler, ScalerDataset, TorchDataLoader
+from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
 data_dir = "/project/ls-gruen/users/jed.homer/data/fields/"
 
@@ -42,7 +42,7 @@ def get_fields(key: Key, Q, n_pix: int, n_fields: int):
     return G, L
     
 
-def get_data(key: Key, n_pix: int) -> Tuple[np.ndarray, np.ndarray]:
+def get_data(key: Key, n_pix: int, n_fields: int) -> Tuple[np.ndarray, np.ndarray]:
     """
         Load Gaussian and lognormal fields
     """
@@ -50,12 +50,12 @@ def get_data(key: Key, n_pix: int) -> Tuple[np.ndarray, np.ndarray]:
     key_A, key_B = jr.split(key)
     Q = np.stack(
         [
-            jr.uniform(key_A, (10_000,), minval=1., maxval=3.),
-            jr.uniform(key_B, (10_000,), minval=1., maxval=3.)
+            jr.uniform(key_A, (n_fields,), minval=1., maxval=3.),
+            jr.uniform(key_B, (n_fields,), minval=1., maxval=3.)
         ],
         axis=1
     )
-    G, L = get_fields(key, Q, n_pix, n_fields=10_000)
+    G, L = get_fields(key, Q, n_pix, n_fields=n_fields)
 
     np.save(os.path.join(data_dir, f"G_{n_pix=}.npy"), G)
     np.save(os.path.join(data_dir, f"LN_{n_pix=}.npy"), L)
@@ -90,22 +90,29 @@ class MapDataset(torch.utils.data.Dataset):
         return self.tensors[0].size(0)
 
 
-def get_grf_labels(n_pix: int) -> np.ndarray:
+def get_grf_labels(n_pix: int) -> Tuple[np.ndarray, np.ndarray]:
     Q = np.load(os.path.join(data_dir, f"G_{n_pix=}.npy"))
     A = np.load(os.path.join(data_dir, f"field_parameters_{n_pix=}.npy"))
     return Q, A
 
 
-def grfs(key, n_pix, split=0.5):
+def grfs(
+    key: Key, 
+    n_pix: int, 
+    split: float = 0.5, 
+    n_fields: int = 10_000, 
+    *, 
+    in_memory: bool = True
+) -> ScalerDataset:
     key_data, key_train, key_valid = jr.split(key, 3)
 
     data_shape = (1, n_pix, n_pix)
     context_shape = (1, n_pix, n_pix)
     parameter_dim = 2
 
-    Q, X, A = get_data(key_data, n_pix) 
+    Q, X, A = get_data(key_data, n_pix, n_fields) 
 
-    print("Fields data:", X.shape, Q.shape)
+    print("\nFields data:", X.shape, Q.shape)
 
     min = X.min()
     max = X.max()
@@ -117,36 +124,41 @@ def grfs(key, n_pix, split=0.5):
 
     scaler = Scaler() # [0,1] -> [-1,1]
 
-    train_transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
-            transforms.Lambda(scaler.forward)
-        ]
-    )
-    valid_transform = transforms.Compose(
-        [transforms.Lambda(scaler.forward)]
-    )
+    n_train = int(split * n_fields)
 
-    n_train = int(split * len(X))
-    train_dataset = MapDataset(
-        (X[:n_train], Q[:n_train], A[:n_train]), transform=train_transform
-    )
-    valid_dataset = MapDataset(
-        (X[n_train:], Q[n_train:], A[n_train:]), transform=valid_transform
-    )
-    train_dataloader = TorchDataLoader(train_dataset, key=key_train)
-    valid_dataloader = TorchDataLoader(valid_dataset, key=key_valid)
+    # If we don't have many maps or they're not too big
+    if in_memory:
+        train_dataloader = InMemoryDataLoader(
+            X=X[:n_train], Q=Q[:n_train], A=A[:n_train], key=key_train
+        )
+        valid_dataloader = InMemoryDataLoader(
+            X=X[n_train:], Q=Q[n_train:], A=A[n_train:], key=key_valid
+        )
+    else:
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.Lambda(scaler.forward)
+            ]
+        )
+        valid_transform = transforms.Compose(
+            [transforms.Lambda(scaler.forward)]
+        )
+        train_dataset = MapDataset(
+            (X[:n_train], Q[:n_train], A[:n_train]), transform=train_transform
+        )
+        valid_dataset = MapDataset(
+            (X[n_train:], Q[n_train:], A[n_train:]), transform=valid_transform
+        )
+        train_dataloader = TorchDataLoader(
+            train_dataset, data_shape, parameter_dim=parameter_dim, key=key_train
+        )
+        valid_dataloader = TorchDataLoader(
+            valid_dataset, data_shape, parameter_dim=parameter_dim, key=key_valid
+        )
 
-    # Don't have many maps
-    # train_dataloader = _InMemoryDataLoader(
-    #     data=X[:n_train], targets=Q[:n_train], key=key_train
-    # )
-    # valid_dataloader = _InMemoryDataLoader(
-    #     data=X[n_train:], targets=Q[n_train:], key=key_valid
-    # )
-
-    def label_fn(key, n):
+    def label_fn(key: Key[jnp.ndarray, "..."], n: int) -> Tuple[Array, Array]:
         Q, A = get_grf_labels(n_pix)
         ix = jr.choice(key, jnp.arange(len(Q)), (n,))
         Q = Q[ix]
@@ -160,6 +172,6 @@ def grfs(key, n_pix, split=0.5):
         data_shape=data_shape,
         context_shape=context_shape,
         parameter_dim=parameter_dim,
-        scaler=scaler,
+        process_fn=scaler,
         label_fn=label_fn
     )

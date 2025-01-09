@@ -1,4 +1,5 @@
 import os
+from typing import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -6,31 +7,28 @@ from typing import Tuple, Optional
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 import equinox as eqx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, PyTree, jaxtyped
+from beartype import beartype as typechecker
 from ml_collections import ConfigDict
 import optax
 from tqdm.auto import trange
 
 from .sde import SDE
 from ._sample import get_eu_sample_fn, get_ode_sample_fn
-from ._shard import shard_batch
 from ._misc import (
     make_dirs, 
     plot_sde, 
     plot_train_sample, 
     plot_model_sample, 
     plot_metrics,
-    load_model, 
-    load_opt_state, 
     save_model, 
-    save_opt_state
+    save_opt_state,
+    load_model, 
+    load_opt_state 
 )
 
 Model = eqx.Module
-OptState = optax.OptState
-TransformUpdateFn = optax.TransformUpdateFn
 
 
 def apply_ema(
@@ -43,26 +41,88 @@ def apply_ema(
     e_, _e = eqx.partition(ema_model, eqx.is_inexact_array)
     # Calculate EMA parameters
     ema_fn = lambda p_ema, p: p_ema * ema_rate + p * (1. - ema_rate)
-    e_ = jtu.tree_map(ema_fn, e_, m_)
+    e_ = jax.tree.map(ema_fn, e_, m_)
     # Combine EMA model parameters and architecture
     return eqx.combine(e_, _m)
+
+
+def accumulate_gradients_scan(
+    model: Model,
+    sde: SDE,
+    xqat: Tuple[
+        Float[Array, "b ..."], 
+        Optional[Float[Array, "b ..."]], 
+        Optional[Float[Array, "b ..."]], 
+        Float[Array, "b"]
+    ],
+    key: Key,
+    n_minibatches: int,
+    *,
+    grad_fn: Callable = None
+) -> Tuple[Float[Array, ""], PyTree]:
+    batch_size = xqat[0].shape[0]
+    minibatch_size = batch_size // n_minibatches
+
+    keys = jr.split(key, n_minibatches)
+
+    def _minibatch_step(minibatch_idx):
+        """ Gradients and metrics for a single minibatch. """
+        _xqat = jax.tree.map(
+            # Slicing with variable index (jax.Array).
+            lambda x: jax.lax.dynamic_slice_in_dim(  
+                x, 
+                start_index=minibatch_idx * minibatch_size, 
+                slice_size=minibatch_size, 
+                axis=0
+            ),
+            xqat, # This works for tuples of batched data e.g. (x, q, a)
+        )
+        L, step_grads = grad_fn(
+            model, sde, *_xqat, keys[minibatch_idx]
+        )
+        return step_grads, L
+
+    def _scan_step(carry, minibatch_idx):
+        """ Scan step function for looping over minibatches. """
+        step_grads, L = _minibatch_step(minibatch_idx)
+        carry = jax.tree.map(jnp.add, carry, (step_grads, L))
+        return carry, None
+
+    # Determine initial shapes for gradients and metrics.
+    grads_shapes, L_shape = jax.eval_shape(_minibatch_step, 0)
+    grads = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), grads_shapes)
+    L = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), L_shape)
+
+    # Loop over minibatches to determine gradients and metrics.
+    (grads, L), _ = jax.lax.scan(
+        _scan_step, 
+        init=(grads, L), 
+        xs=jnp.arange(n_minibatches), 
+        length=n_minibatches
+    )
+
+    # Average gradients over minibatches.
+    grads = jax.tree.map(lambda g: g / n_minibatches, grads)
+    L = jax.tree.map(lambda m: m / n_minibatches, L)
+
+    return L, grads # Same signature as unaccumulated 
 
 
 def single_loss_fn(
     model: Model, 
     sde: SDE,
-    x: Array, 
-    q: Array, 
-    a: Array, 
-    t: Array, 
+    x: Float[Array, "..."], 
+    q: Optional[Float[Array, "..."]], 
+    a: Optional[Float[Array, "..."]],
+    t: Float[Array, ""],
     key: Key
-) -> Array:
+) -> Float[Array, ""]:
     key_noise, key_apply = jr.split(key)
     mean, std = sde.marginal_prob(x, t) 
     noise = jr.normal(key_noise, x.shape)
     y = mean + std * noise
     y_ = model(t, y, q=q, a=a, key=key_apply) # Inference is true in validation
-    return sde.weight(t) * jnp.square(y_ + noise / std).mean()
+    return sde.weight(t) * jnp.mean(jnp.square(y_ + noise / std))
 
 
 def sample_time(
@@ -77,39 +137,73 @@ def sample_time(
     return t
 
 
+@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
 def batch_loss_fn(
     model: Model, 
     sde: SDE,
-    x: Array, 
-    q: Array, 
-    a: Array,
-    key: Key
+    x: Float[Array, "b ..."], 
+    q: Optional[Float[Array, "b ..."]], 
+    a: Optional[Float[Array, "b ..."]],
+    t: Float[Array, "b"],
+    key: Key[jnp.ndarray, "..."]
 ) -> Array:
     batch_size = x.shape[0]
-    key_t, key_L = jr.split(key)
-    keys_L = jr.split(key_L, batch_size)
-    t = sample_time(key_t, sde.t0, sde.t1, batch_size)
+    keys_L = jr.split(key, batch_size)
     loss_fn = jax.vmap(partial(single_loss_fn, model, sde))
     return loss_fn(x, q, a, t, keys_L).mean()
 
 
+@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
 def make_step(
     model: Model, 
     sde: SDE,
-    x: Array, 
-    q: Array, 
-    a: Array, 
-    key: Key, 
-    opt_state: OptState, 
-    opt_update: TransformUpdateFn
-) -> Tuple[Array, Model, Key, OptState]:
+    xqa: Tuple[
+        Float[Array, "b ..."], 
+        Optional[Float[Array, "b ..."]], 
+        Optional[Float[Array, "b ..."]], 
+    ],
+    key: Key[jnp.ndarray, "..."], 
+    opt_state: optax.OptState, 
+    opt: optax.GradientTransformation, 
+    *,
+    accumulate_gradients: bool = False,
+    n_minibatches: int = 4,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
+) -> Tuple[
+    Float[Array, ""], Model, Key[jnp.ndarray, "..."], optax.OptState
+]:
     model = eqx.nn.inference_mode(model, False)
-    loss_fn = eqx.filter_value_and_grad(batch_loss_fn)
-    loss, grads = loss_fn(model, sde, x, q, a, key)
-    updates, opt_state = opt_update(grads, opt_state, model)
+
+    key_apply, key_t = jr.split(key)
+
+    grad_fn = eqx.filter_value_and_grad(batch_loss_fn)
+
+    if replicated_sharding:
+        model, opt_state = eqx.filter_shard((model, opt_state), replicated_sharding)
+    if sharding:
+        xqa = eqx.filter_shard(xqa, sharding)
+
+    x, q, a = xqa
+    t = sample_time(key_t, sde.t0, sde.t1, x.shape[0])
+
+    if accumulate_gradients:
+        loss, grads = accumulate_gradients_scan(
+            model, 
+            sde,
+            (x, q, a, t), 
+            key_apply, 
+            n_minibatches=n_minibatches, 
+            grad_fn=grad_fn
+        ) 
+    else:
+        loss, grads = grad_fn(model, sde, x, q, a, t, key_apply)
+
+    updates, opt_state = opt.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
+
     key, _ = jr.split(key)
     return loss, model, key, opt_state
 
@@ -118,17 +212,34 @@ def make_step(
 def evaluate(
     model: Model, 
     sde: SDE, 
-    x: Array, 
-    q: Array, 
-    a: Array, 
-    key: Key
+    xqa: Tuple[
+        Float[Array, "b ..."], 
+        Optional[Float[Array, "b ..."]], 
+        Optional[Float[Array, "b ..."]], 
+    ],
+    key: Key[jnp.ndarray, "..."],
+    *,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
 ) -> Array:
     model = eqx.nn.inference_mode(model, True)
-    loss = batch_loss_fn(model, sde, x, q, a, key)
+
+    key_apply, key_t = jr.split(key)
+
+    if replicated_sharding:
+        model = eqx.filter_shard(model, replicated_sharding)
+    if sharding:
+        x, q, a = eqx.filter_shard(xqa, sharding)
+
+    x, q, a = xqa
+
+    t = sample_time(key_t, sde.t0, sde.t1, x.shape[0])
+
+    loss = batch_loss_fn(model, sde, x, q, a, t, key_apply)
     return loss 
 
 
-def get_opt(config: ConfigDict):
+def get_opt(config: ConfigDict) -> optax.GradientTransformation:
     return getattr(optax, config.opt)(config.lr, **config.opt_kwargs)
 
 
@@ -144,12 +255,13 @@ def train_from_config(
     # Reload optimiser or not
     reload_opt_state: bool = False,
     # Sharding of devices to run on
-    sharding: Optional[jax.sharding.Sharding] = None,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
     plot_train_data: bool = False
-) -> eqx.Module:
+) -> Model:
     """
         Trains a diffusion model built from a score network (`model`) using a stochastic 
         differential equation (SDE, `sde`) with a given dataset. Requires a config object.
@@ -174,8 +286,11 @@ def train_from_config(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the optimizer state and model from previous checkpoint files. Defaults to starting from scratch.
         
-        `sharding` : `Optional[jax.sharding.Sharding]`, default: `None`
-            Optional device sharding for distributed training across multiple devices.
+        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
+
+        `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards all model arrays across each device.
         
         `save_dir` : `Optional[str]`, default: `None`
             Directory path to save the model, optimizer state, and training figures. If `None`, a default directory is created.
@@ -207,7 +322,7 @@ def train_from_config(
 
     # Model and optimiser save filenames
     model_filename = os.path.join(
-        exp_dir, f"sgm_{dataset.name}_{config.model.model_type}.eqx"
+        exp_dir, f"{dataset.name}_{config.model.model_type}.eqx"
     )
     state_filename = os.path.join(
         exp_dir, f"state_{dataset.name}_{config.model.model_type}.obj"
@@ -228,65 +343,82 @@ def train_from_config(
 
     # Reload optimiser and state if so desired
     opt = get_opt(config)
-    if not reload_opt_state:
-        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
-        start_step = 0
-    else:
+    if reload_opt_state:
         state = load_opt_state(filename=state_filename)
 
         opt, opt_state, start_step = state.values()
         model = load_model(model, model_filename)
 
         print("Loaded model and optimiser state.")
+    else:
+        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+        start_step = 0
 
     train_key, sample_key, valid_key = jr.split(key, 3)
 
     train_total_value = 0
     valid_total_value = 0
-    train_total_size = 0
-    valid_total_size = 0
+    total_size = 0
     train_losses = []
     valid_losses = []
 
     if config.use_ema:
         ema_model = deepcopy(model)
 
-    with trange(
-        start_step, config.n_steps, colour="red"
-    ) as steps:
+    if replicated_sharding:
+        ema_model = eqx.filter_shard(ema_model, replicated_sharding)
+
+    with trange(start_step, config.n_steps, colour="red") as steps:
         for step, train_batch, valid_batch in zip(
             steps, 
             dataset.train_dataloader.loop(config.batch_size), 
             dataset.valid_dataloader.loop(config.batch_size)
         ):
             # Train
-            x, q, a = shard_batch(train_batch, sharding)
             _Lt, model, train_key, opt_state = make_step(
-                model, sde, x, q, a, train_key, opt_state, opt.update
+                model, 
+                sde, 
+                train_batch,
+                train_key, 
+                opt_state, 
+                opt,
+                accumulate_gradients=config.accumulate_gradients,
+                n_minibatches=config.n_minibatches,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             train_total_value += _Lt.item()
-            train_total_size += 1
-            train_losses.append(train_total_value / train_total_size)
+            total_size += 1
+            train_losses.append(train_total_value / total_size)
 
             if config.use_ema:
                 ema_model = apply_ema(ema_model, model)
 
             # Validate
-            x, q, a = shard_batch(valid_batch, sharding)
             _Lv = evaluate(
-                ema_model if config.use_ema else model, sde, x, q, a, valid_key
+                ema_model if config.use_ema else model, 
+                sde, 
+                valid_batch,
+                valid_key,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             valid_total_value += _Lv.item()
-            valid_total_size += 1
-            valid_losses.append(valid_total_value / valid_total_size)
+            valid_losses.append(valid_total_value / total_size)
 
             steps.set_postfix(
                 {"Lt" : f"{train_losses[-1]:.3E}", "Lv" : f"{valid_losses[-1]:.3E}"}
             )
 
-            if (step % config.sample_and_save_every) == 0 or step == config.n_steps - 1:
+            if (
+                ((step % config.sample_and_save_every) == 0) 
+                or 
+                (step == config.n_steps - 1)
+                or 
+                (step == 100)
+            ):
                 # Sample model
                 key_Q, key_sample = jr.split(sample_key) # Fixed key
                 sample_keys = jr.split(key_sample, config.sample_size ** 2)
@@ -348,6 +480,8 @@ def train(
     opt: optax.GradientTransformation,
     n_steps: int,
     batch_size: int,
+    accumulate_gradients: bool = False,
+    n_minibatches: int = 4,
     use_ema: bool = True,
     sample_and_save_every: int = 1_000,
     # Sampling
@@ -357,14 +491,15 @@ def train(
     # Reload optimiser or not
     reload_opt_state: bool = False,
     # Sharding of devices to run on
-    sharding: Optional[jax.sharding.Sharding] = None,
+    sharding: Optional[jax.sharding.NamedSharding] = None,
+    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
     # Plotting
     plot_train_data: bool = False,
     cmap: str = "gray_r"
-) -> eqx.Module:
+) -> Model:
     """
         Trains a diffusion model using a stochastic differential equation (SDE) based on 
         the provided score network model and dataset, with support for optimizer state reloading, 
@@ -405,8 +540,11 @@ def train(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the model and optimizer state from a previous checkpoint to continue training.
         
-        `sharding` : `Optional[jax.sharding.Sharding]`, default: `None`
-            Optional sharding scheme to distribute training across multiple devices.
+        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
+
+        `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
+            Optional device sharding for distributed training across multiple devices. Shards all model arrays across each device.
 
         `save_dir` : `Optional[str]`, default: `None`
             Directory path to save the model, optimizer state, and training logs. If `None`, a default path is generated.
@@ -439,7 +577,7 @@ def train(
     # Model and optimiser save filenames
     model_type = model.__class__.__name__
     model_filename = os.path.join(
-        exp_dir, f"sgm_{dataset.name}_{model_type}.eqx"
+        exp_dir, f"{dataset.name}_{model_type}.eqx"
     )
     state_filename = os.path.join(
         exp_dir, f"state_{dataset.name}_{model_type}.obj"
@@ -474,48 +612,69 @@ def train(
 
     train_total_value = 0
     valid_total_value = 0
-    train_total_size = 0
-    valid_total_size = 0
+    total_size = 0
     train_losses = []
     valid_losses = []
 
     if use_ema:
         ema_model = deepcopy(model)
 
+    if replicated_sharding:
+        ema_model = eqx.filter_shard(ema_model, replicated_sharding)
+
     with trange(start_step, n_steps, colour="red") as steps:
         for step, train_batch, valid_batch in zip(
             steps, 
-            dataset.train_dataloader.loop(batch_size), 
+            dataset.train_dataloader.loop(
+                n_minibatches * batch_size if accumulate_gradients else batch_size
+            ), 
             dataset.valid_dataloader.loop(batch_size)
         ):
             # Train
-            x, q, a = shard_batch(train_batch, sharding)
             _Lt, model, train_key, opt_state = make_step(
-                model, sde, x, q, a, train_key, opt_state, opt.update
+                model, 
+                sde, 
+                train_batch,
+                train_key, 
+                opt_state, 
+                opt,
+                accumulate_gradients=accumulate_gradients,
+                n_minibatches=n_minibatches,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             train_total_value += _Lt.item()
-            train_total_size += 1
-            train_losses.append(train_total_value / train_total_size)
+            total_size += 1
+            train_losses.append(train_total_value / total_size)
 
             if use_ema:
                 ema_model = apply_ema(ema_model, model)
 
             # Validate
-            x, q, a = shard_batch(valid_batch, sharding)
             _Lv = evaluate(
-                ema_model if use_ema else model, sde, x, q, a, valid_key
+                ema_model if use_ema else model, 
+                sde, 
+                valid_batch,
+                valid_key,
+                sharding=sharding,
+                replicated_sharding=replicated_sharding
             )
 
             valid_total_value += _Lv.item()
-            valid_total_size += 1
-            valid_losses.append(valid_total_value / valid_total_size)
+            valid_losses.append(valid_total_value / total_size)
 
             steps.set_postfix(
                 {"Lt" : f"{train_losses[-1]:.3E}", "Lv" : f"{valid_losses[-1]:.3E}"}
             )
 
-            if (step % sample_and_save_every) == 0 or step == n_steps - 1:
+            if (
+                ((step % sample_and_save_every) == 0) 
+                or 
+                (step == n_steps - 1)
+                or 
+                (step == 100)
+            ):                
                 # Sample model
                 key_Q, key_sample = jr.split(sample_key) # Fixed key
                 sample_keys = jr.split(key_sample, sample_size ** 2)

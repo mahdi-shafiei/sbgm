@@ -1,3 +1,4 @@
+import os
 import jax.random as jr 
 import jax.numpy as jnp
 from jaxtyping import Key
@@ -6,10 +7,11 @@ from torchvision import transforms, datasets
 from .utils import Scaler, ScalerDataset, TorchDataLoader
 
 
-def flowers(key: Key, n_pix: int) -> ScalerDataset:
+def flowers(path: str, key: Key, n_pix: int) -> ScalerDataset:
     key_train, key_valid = jr.split(key)
     data_shape = (3, n_pix, n_pix)
-    context_shape = (1,)
+    parameter_dim = 1
+    n_classes = 102
 
     scaler = Scaler()
 
@@ -34,24 +36,39 @@ def flowers(key: Key, n_pix: int) -> ScalerDataset:
         ]
     )
     train_dataset = datasets.Flowers102(
-        "datasets/" + "flowers", 
+        os.path.join(path, "datasets/flowers/"), 
         split="train", 
         download=True, 
-        transform=train_transform
+        transform=train_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
     valid_dataset = datasets.Flowers102(
-        "datasets/" + "flowers", 
+        os.path.join(path, "datasets/flowers/"), 
         split="val", 
         download=True, 
-        transform=valid_transform
+        transform=valid_transform,
+        target_transform=transforms.Lambda(lambda x: x.float())
     )
 
-    train_dataloader = TorchDataLoader(train_dataset, key=key_train)
-    valid_dataloader = TorchDataLoader(valid_dataset, key=key_valid)
+    train_dataloader = TorchDataLoader(
+        train_dataset, 
+        data_shape=data_shape, 
+        context_shape=None, 
+        parameter_dim=parameter_dim,
+        key=key_train
+    )
+    valid_dataloader = TorchDataLoader(
+        valid_dataset, 
+        data_shape=data_shape, 
+        context_shape=None, 
+        parameter_dim=parameter_dim,
+        key=key_valid
+    )
 
     def label_fn(key, n):
         Q = None
-        A = jr.choice(key, jnp.arange(10), (n,))[:, jnp.newaxis]
+        A = jr.choice(key, jnp.arange(n_classes), (n,))
+        A = A[:, jnp.newaxis].astype(jnp.float32)
         return Q, A
 
     return ScalerDataset(
@@ -59,7 +76,8 @@ def flowers(key: Key, n_pix: int) -> ScalerDataset:
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         data_shape=data_shape,
-        context_shape=context_shape,
-        scaler=scaler,
+        context_shape=None,
+        parameter_dim=parameter_dim,
+        process_fn=scaler,
         label_fn=label_fn
     )
