@@ -7,3 +7,5 @@ _fisher.py
 _set_transformer.py
 .pytest_cacche/
 __unet.py
+cifar10.ipynb
+grfs.ipynb
