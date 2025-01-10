@@ -1,10 +1,11 @@
-from typing import Sequence, Optional, Union
+from typing import Sequence, Optional, Callable
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import einops
 import equinox as eqx
-from jaxtyping import Key, Array
+from jaxtyping import Key, Array, Float, jaxtyped
+from beartype import beartype as typechecker
 
 
 class AdaLayerNorm(eqx.Module):
@@ -134,7 +135,11 @@ class Mixer2d(eqx.Module):
     t1: float
     embedding_dim: int
     final_activation: callable
+    img_size: Sequence[int]
+    q_dim: int
+    a_dim: int
 
+    @jaxtyped(typechecker=typechecker)
     def __init__(
         self,
         img_size: Sequence[int],
@@ -145,11 +150,11 @@ class Mixer2d(eqx.Module):
         num_blocks: int,
         t1: float,
         embedding_dim: int = 8,
-        final_activation: Optional[Union[callable, str]] = None,
+        final_activation: Optional[Callable | str] = None,
         q_dim: Optional[int] = None,
         a_dim: Optional[int] = None,
         *,
-        key: Key
+        key: Key[jnp.ndarray, "..."]
     ):
         """
             A 2D MLP Mixer model.
@@ -207,6 +212,10 @@ class Mixer2d(eqx.Module):
         _input_size = input_size + q_dim if q_dim is not None else input_size
         _context_dim = embedding_dim + a_dim if a_dim is not None else embedding_dim
 
+        self.img_size = img_size
+        self.q_dim = q_dim
+        self.a_dim = a_dim
+
         self.conv_in = eqx.nn.Conv2d(
             _input_size, 
             hidden_size, 
@@ -237,15 +246,16 @@ class Mixer2d(eqx.Module):
         self.embedding_dim = embedding_dim
         self.final_activation = get_activation_fn(final_activation)
 
+    @jaxtyped(typechecker=typechecker)
     def __call__(
         self, 
-        t: Union[float, Array], 
-        y: Array, 
-        q: Optional[Array] = None, 
-        a: Optional[Array] = None, 
+        t: float | Float[Array, ""], 
+        y: Float[Array, "..."], 
+        q: Optional[Float[Array, "{self.q_dim} ..."]] = None, 
+        a: Optional[Float[Array, "{self.a_dim}"]] = None, 
         *, 
-        key: Optional[Key] = None
-    ) -> Array:
+        key: Optional[Key[jnp.ndarray, "..."]] = None
+    ) -> Float[Array, "..."]:
         _, height, width = y.shape
         t = jnp.atleast_1d(t / self.t1)
         t = get_timestep_embedding(t, embedding_dim=self.embedding_dim)

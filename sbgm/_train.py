@@ -466,7 +466,7 @@ def train_from_config(
                 # Plot losses etc
                 plot_metrics(train_losses, valid_losses, step, exp_dir)
 
-    return model
+    return ema_model if config.use_ema else model
 
 
 def train(
@@ -726,4 +726,4 @@ def train(
                 # Plot losses etc
                 plot_metrics(train_losses, valid_losses, step, exp_dir)
 
-    return model
+    return ema_model if use_ema else model

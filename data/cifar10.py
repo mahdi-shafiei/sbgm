@@ -57,7 +57,6 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         target_transform=transforms.Lambda(lambda x: x.float())
     )
 
-
     if in_memory:
         Xt, At = convert_torch_to_in_memory(train_dataset) 
         Xv, Av = convert_torch_to_in_memory(valid_dataset) 
@@ -65,7 +64,8 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         At = At.astype(jnp.float32)
         Av = Av.astype(jnp.float32)
 
-        process_fn = Scaler(x_min=Xt.min(), x_max=Xt.max())
+        # process_fn = Scaler(x_min=Xt.min(), x_max=Xt.max())
+        process_fn = Normer(x_mean=Xt.mean(), x_std=Xt.std())
 
         train_dataloader = InMemoryDataLoader(
             X=Xt, A=At, process_fn=process_fn, key=key_train) 
