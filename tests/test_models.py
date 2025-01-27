@@ -28,6 +28,7 @@ def test_resnet():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     a = None
     q = jnp.ones((5,)) 
@@ -43,6 +44,7 @@ def test_resnet():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     a = jnp.ones((3,))
     q = jnp.ones((5,)) 
@@ -60,6 +62,7 @@ def test_resnet():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.isfinite(out)
 
     net = ResidualNetwork(
         x.size, 
@@ -72,6 +75,7 @@ def test_resnet():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
 
 def test_mixer():
@@ -103,6 +107,7 @@ def test_mixer():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q = None
     a = jnp.ones((5,))
@@ -126,6 +131,7 @@ def test_mixer():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q = jnp.ones((1, 32, 32)) 
     a = None
@@ -149,6 +155,7 @@ def test_mixer():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q = None
     a = None
@@ -172,7 +179,7 @@ def test_mixer():
 
     out = net(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
-
+    assert jnp.all(jnp.isfinite(out))
 
 
 def test_unet():
@@ -211,6 +218,7 @@ def test_unet():
 
     out = unet(t, x, q=q, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q_dim = None
     a_dim = None
@@ -231,6 +239,7 @@ def test_unet():
     
     out = unet(t, x, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q_dim = 1
     a_dim = None
@@ -253,6 +262,7 @@ def test_unet():
 
     out = unet(t, x, q=q, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))
 
     q_dim = None
     a_dim = 2 
@@ -274,3 +284,4 @@ def test_unet():
     a = jnp.ones((2,))
     out = unet(t, x, a=a, key=key)
     assert out.shape == x.shape
+    assert jnp.all(jnp.isfinite(out))

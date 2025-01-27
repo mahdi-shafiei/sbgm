@@ -30,6 +30,9 @@ def test_sdes():
     assert f.shape == (data_dim,)
     assert g.shape == ()
     assert xt.shape == x0.shape
+    assert jnp.all(jnp.isfinite(xt))
+    assert jnp.all(jnp.isfinite(f))
+    assert jnp.all(jnp.isfinite(g))
 
     sde = VPSDE(beta_integral_fn=lambda t: t) 
 
@@ -40,6 +43,9 @@ def test_sdes():
     assert f.shape == (data_dim,)
     assert g.shape == ()
     assert xt.shape == x0.shape
+    assert jnp.all(jnp.isfinite(xt))
+    assert jnp.all(jnp.isfinite(f))
+    assert jnp.all(jnp.isfinite(g))
 
     sde = SubVPSDE(beta_integral_fn=lambda t: t) 
 
@@ -50,3 +56,6 @@ def test_sdes():
     assert f.shape == (data_dim,)
     assert g.shape == ()
     assert xt.shape == x0.shape
+    assert jnp.all(jnp.isfinite(xt))
+    assert jnp.all(jnp.isfinite(f))
+    assert jnp.all(jnp.isfinite(g))

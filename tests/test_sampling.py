@@ -61,11 +61,13 @@ def test_sampling():
     eu_samples = jax.vmap(eu_sample_fn)(key_samples)
 
     assert eu_samples.shape == (n_sample,) + data_shape
+    assert jnp.all(jnp.isfinite(eu_samples))
 
     ode_sample_fn = get_ode_sample_fn(model, sde, data_shape)
     ode_samples = jax.vmap(ode_sample_fn)(key_samples)
 
     assert ode_samples.shape == (n_sample,) + data_shape
+    assert jnp.all(jnp.isfinite(ode_samples))
 
     a_dim = 5
     q_dim = 10
@@ -94,8 +96,10 @@ def test_sampling():
     eu_samples = jax.vmap(eu_sample_fn)(key_samples, Q, A)
 
     assert eu_samples.shape == (n_sample,) + data_shape
+    assert jnp.all(jnp.isfinite(eu_samples))
 
     ode_sample_fn = get_ode_sample_fn(model, sde, data_shape)
     ode_samples = jax.vmap(ode_sample_fn)(key_samples, Q, A)
 
     assert ode_samples.shape == (n_sample,) + data_shape
+    assert jnp.all(jnp.isfinite(ode_samples))

@@ -53,6 +53,7 @@ def test_likelihood():
     L_X = jax.vmap(log_likelihood_fn)(X, A, Q)
 
     assert L_X.shape == (len(X),)
+    assert jnp.all(jnp.isfinite(L_X))
 
     model = MLP(
         1024 + 1, 
@@ -71,6 +72,7 @@ def test_likelihood():
     L_X = jax.vmap(log_likelihood_fn)(X)
 
     assert L_X.shape == (len(X),)
+    assert jnp.all(jnp.isfinite(L_X))
 
     model = MLP(
         1024 + a_dim + q_dim + 1, 
@@ -93,6 +95,7 @@ def test_likelihood():
     L_X = jax.vmap(log_likelihood_fn)(X, A, Q, keys)
 
     assert L_X.shape == (len(X),)
+    assert jnp.all(jnp.isfinite(L_X))
 
     model = MLP(
         1024 + 1, 
@@ -113,3 +116,4 @@ def test_likelihood():
     L_X = jax.vmap(log_likelihood_fn, in_axes=(0, None, None, 0))(X, None, None, keys)
 
     assert L_X.shape == (len(X),)
+    assert jnp.all(jnp.isfinite(L_X))
