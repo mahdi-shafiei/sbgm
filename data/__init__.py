@@ -13,22 +13,23 @@ from .utils import Scaler, ScalerDataset, InMemoryDataLoader, TorchDataLoader
 def get_dataset(
     datasets_path: str,
     key: Key, 
-    config: ConfigDict
+    config: ConfigDict,
+    dataset_kwargs: dict
 ) -> ScalerDataset:
 
     dataset_name = config.dataset_name.lower()
 
     if dataset_name == "flowers":
-        dataset = flowers(key, n_pix=config.n_pix)
+        dataset = flowers(datasets_path, key, n_pix=config.n_pix, **dataset_kwargs)
     if dataset_name == "cifar10":
-        dataset = cifar10(datasets_path, key)
+        dataset = cifar10(datasets_path, key, **dataset_kwargs)
     if dataset_name == "mnist":
-        dataset = mnist(datasets_path, key)
+        dataset = mnist(datasets_path, key, **dataset_kwargs)
     if dataset_name == "moons":
         dataset = moons(key)
     if dataset_name == "grfs":
-        dataset = grfs(key, n_pix=config.n_pix)
+        dataset = grfs(key, n_pix=config.n_pix, **dataset_kwargs)
     if dataset_name == "quijote":
-        dataset = quijote(key, n_pix=config.n_pix, split=0.9)
+        dataset = quijote(key, n_pix=config.n_pix, split=0.9, **dataset_kwargs)
 
     return dataset
