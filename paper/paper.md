@@ -86,11 +86,11 @@ $$
 \log p(\boldsymbol{x}(0)) = \log p(\boldsymbol{x}(T)) + \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}}\cdot f(\boldsymbol{x}, t).
 $$
 
-The code implements these calculations also for the Hutchinson trace estimation method [@ffjord] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
+The code implements these calculations also for the Hutchinson trace estimation method [@ffjord, @Hutchinson] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
 
 # Implementations and future work
 
-Diffusion models are defined in `sbgm` via a score-network model $\boldsymbol{s}_{\theta}$ and an SDE. All the availble SDEs (variance exploding (VE), variance preserving (VP) and sub-variance preserving (SubVP) [@sde]) in the literature of score-based diffusion models are available. We provide implementations for UNet [@unet], MLP-Mixer [@mixer] and Residual Network [@resnet] models which are state-of-the-art for diffusion tasks. It is possible to fit score-based diffusion models to a conditional distribution $p(\boldsymbol{x}|\boldsymbol{\pi}, \boldsymbol{y})$ where in typical inverse problems $\boldsymbol{y}$ would be an image and $\boldsymbol{\pi}$ a set of parameters in a physical model for the data [@batziolis] (e.g. to solve inverse problems). The code is compatible with any model written in the `equinox` [@equinox] framework. We are extending the code to provide transformer-based [@dits] and latent diffusion models [@ldms]. 
+Diffusion models are defined in `sbgm` via a score-network model $\boldsymbol{s}_{\theta}$ and an SDE. All the availble SDEs (variance exploding (VE), variance preserving (VP) and sub-variance preserving (SubVP) [@sde]) in the literature of score-based diffusion models are available. We provide implementations for UNet [@unet], Diffusion Transformers [@dit], MLP-Mixer [@mixer] and Residual Network [@resnet] models which are state-of-the-art for diffusion tasks. It is possible to fit score-based diffusion models to a conditional distribution $p(\boldsymbol{x}|\boldsymbol{\pi}, \boldsymbol{y})$ where in typical inverse problems $\boldsymbol{y}$ would be an image and $\boldsymbol{\pi}$ a set of parameters in a physical model for the data [@batziolis] (e.g. to solve inverse problems). The code is compatible with any model written in the `equinox` [@equinox] framework. We are extending the code to provide transformer-based [@dits] and latent diffusion models [@ldms]. 
 
 # Acknowledgements
 

@@ -9,7 +9,7 @@ import torch
 from torchvision import transforms
 import powerbox
 
-from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
+from .utils import Scaler, Normer, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
 data_dir = "/project/ls-gruen/users/jed.homer/data/fields/"
 
@@ -114,15 +114,10 @@ def grfs(
 
     print("\nFields data:", X.shape, Q.shape)
 
-    min = X.min()
-    max = X.max()
-    X = (X - min) / (max - min) # ... -> [0, 1]
+    X = (X - jnp.mean(X, axis=0)) / jnp.std(X, axis=0)  # Standardize fields
+    Q = (Q - jnp.mean(Q, axis=0)) / jnp.std(Q, axis=0)  # Standardize fields
 
-    # min = Q.min()
-    # max = Q.max()
-    # Q = (Q - min) / (max - min) # ... -> [0, 1]
-
-    scaler = Scaler() # [0,1] -> [-1,1]
+    scaler = Normer() #Scaler() # [0,1] -> [-1,1]
 
     n_train = int(split * n_fields)
 
@@ -152,18 +147,24 @@ def grfs(
             (X[n_train:], Q[n_train:], A[n_train:]), transform=valid_transform
         )
         train_dataloader = TorchDataLoader(
-            train_dataset, data_shape, parameter_dim=parameter_dim, key=key_train
+            train_dataset, 
+            data_shape=data_shape, 
+            context_shape=context_shape, 
+            parameter_dim=parameter_dim, 
+            key=key_train
         )
         valid_dataloader = TorchDataLoader(
-            valid_dataset, data_shape, parameter_dim=parameter_dim, key=key_valid
+            valid_dataset, 
+            data_shape=data_shape, 
+            context_shape=context_shape,
+            parameter_dim=parameter_dim, 
+            key=key_valid
         )
 
     def label_fn(key: Key[jnp.ndarray, "..."], n: int) -> Tuple[Array, Array]:
         Q, A = get_grf_labels(n_pix)
         ix = jr.choice(key, jnp.arange(len(Q)), (n,))
-        Q = Q[ix]
-        A = A[ix]
-        return Q, A
+        return Q[ix], A[ix]
 
     return ScalerDataset(
         name="grfs",

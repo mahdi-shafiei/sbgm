@@ -8,7 +8,9 @@ from .utils import Scaler, ScalerDataset, TorchDataLoader
 
 
 def flowers(path: str, key: Key, n_pix: int) -> ScalerDataset:
+
     key_train, key_valid = jr.split(key)
+
     data_shape = (3, n_pix, n_pix)
     parameter_dim = 1
     n_classes = 102
@@ -19,7 +21,6 @@ def flowers(path: str, key: Key, n_pix: int) -> ScalerDataset:
         [
             transforms.Resize((n_pix, n_pix)),
             transforms.RandomCrop(n_pix, padding=4, padding_mode='reflect'),
-            # transforms.Grayscale(),
             transforms.RandomHorizontalFlip(),
             transforms.RandomVerticalFlip(),
             transforms.ToTensor(),
@@ -30,11 +31,11 @@ def flowers(path: str, key: Key, n_pix: int) -> ScalerDataset:
         [
             transforms.Resize((n_pix, n_pix)),
             transforms.RandomCrop(n_pix, padding=4, padding_mode='reflect'),
-            # transforms.Grayscale(),
             transforms.ToTensor(),
             transforms.Lambda(scaler.forward)
         ]
     )
+
     train_dataset = datasets.Flowers102(
         os.path.join(path, "datasets/flowers/"), 
         split="train", 

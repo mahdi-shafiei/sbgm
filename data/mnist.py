@@ -13,7 +13,9 @@ def tensor_to_array(tensor: Tensor) -> Array:
 
 
 def mnist(path:str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
+
     key_train, key_valid = jr.split(key)
+
     n_pix = 28
     data_shape = (1, n_pix, n_pix)
     parameter_dim = 1 

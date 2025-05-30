@@ -4,6 +4,7 @@ __pycache__/
 imgs/
 exps/
 _fisher.py
+sbgm/_sbgm.py
 _set_transformer.py
 .pytest_cacche/
 __unet.py

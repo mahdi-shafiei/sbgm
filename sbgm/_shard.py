@@ -1,21 +1,26 @@
-from typing import Tuple
+from typing import Tuple, Optional
 import jax
-from jax.experimental import mesh_utils
 
 
-def get_shardings() -> Tuple[jax.sharding.PositionalSharding | None, jax.sharding.NamedSharding | None]:
-    devices = jax.local_devices()
+def get_shardings() -> Tuple[
+    Optional[jax.sharding.NamedSharding], Optional[jax.sharding.NamedSharding]
+]:
+    devices = jax.devices()
     n_devices = len(devices)
+
     print(f"Running on {n_devices} local devices: \n\t{devices}")
 
     if n_devices > 1:
-        mesh = jax.sharding.Mesh(devices, ('x',))
+
+        mesh = jax.sharding.Mesh(devices, "x")
+
+        replicated = jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec()
+        )
         sharding = jax.sharding.NamedSharding(
-            mesh, spec=jax.sharding.PartitionSpec('x')
+            mesh, jax.sharding.PartitionSpec("x")
         )
 
-        devices = mesh_utils.create_device_mesh((n_devices, 1))
-        replicated = jax.sharding.PositionalSharding(devices).replicate()
     else:
         sharding = replicated = None
 

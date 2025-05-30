@@ -10,6 +10,7 @@ def key_to_seed(key):
 
 def moons(key):
     key_train, key_valid = jr.split(key)
+
     data_shape = (2,)
     context_shape = None 
     parameter_dim = 1
@@ -24,17 +25,6 @@ def moons(key):
     Yv = Yv[:, jnp.newaxis].astype(jnp.float32)
 
     process_fn = Normer(Xt.mean(), Xt.std())
-
-    # min = Xt.min()
-    # max = Xt.max()
-    # mean = Xt.mean()
-    # std = Xt.std()
-
-    # (We do need to handle normalisation ourselves though.)
-    # train_data = (Xt - min) / (max - min)
-    # valid_data = (Xv - min) / (max - min)
-    # train_data = (Xt - mean) / std
-    # valid_data = (Xv - mean) / std
     
     train_dataloader = InMemoryDataLoader(
         X=jnp.asarray(Xt), Q=jnp.asarray(Yt), A=None, process_fn=process_fn, key=key_train

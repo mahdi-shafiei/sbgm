@@ -42,7 +42,7 @@ def load_opt_state(filename="state.obj"):
 def count_params(model):
     return np.log10(
         sum(
-            x.size for x in jax.tree_util.tree_leaves(model) 
+            x.size for x in jax.tree.leaves(model) 
             if eqx.is_array(x)
         )
     )
@@ -98,7 +98,8 @@ def plot_model_sample(eu_sample, ode_sample, dataset, cmap, filename):
     def rescale(sample):
         if dataset.process_fn is not None:
             sample = dataset.process_fn.reverse(sample) 
-            sample = jnp.clip(sample, 0., 1.) 
+            # sample = jnp.clip(sample, 0., 1.) 
+            # sample = jnp.clip(img, min=0., max=1.) if c == 3 else img, 
         return sample
 
     # EU sampling

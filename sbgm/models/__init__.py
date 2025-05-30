@@ -7,6 +7,7 @@ import ml_collections
 from ._mixer import Mixer2d
 from ._mlp import ResidualNetwork 
 from ._unet import UNet
+from ._dit import DiT
 
 
 def get_model(
@@ -64,8 +65,16 @@ def get_model(
             t1=config.sde.t1,
             key=model_key
         )
-    if model_type == "CCT":
-        raise NotImplementedError
     if model_type == "DiT":
-        raise NotImplementedError
+        model = DiT(
+            img_size=config.img_size,
+            channels=config.n_channels,
+            embed_dim=config.embed_dim,
+            patch_size=config.patch_size,
+            depth=config.depth,
+            n_heads=config.n_heads,
+            q_dim=context_channels, # Number of channels in conditioning map
+            a_dim=parameter_dim,    # Number of parameters in power spectrum model
+            key=model_key
+        )
     return model

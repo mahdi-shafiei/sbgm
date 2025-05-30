@@ -12,7 +12,6 @@ import equinox as eqx
 from jaxtyping import Key, Array, Float, jaxtyped
 from beartype import beartype as typechecker
 
-import numpy as np
 from einops import einsum, rearrange, repeat
 import einx
 

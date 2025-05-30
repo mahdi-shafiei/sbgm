@@ -171,7 +171,7 @@ def make_step(
     accumulate_gradients: bool = False,
     n_minibatches: int = 4,
     sharding: Optional[jax.sharding.NamedSharding] = None,
-    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
+    replicated_sharding: Optional[jax.sharding.NamedSharding] = None
 ) -> Tuple[
     Float[Array, ""], Model, Key[jnp.ndarray, "..."], optax.OptState
 ]:
@@ -220,7 +220,7 @@ def evaluate(
     key: Key[jnp.ndarray, "..."],
     *,
     sharding: Optional[jax.sharding.NamedSharding] = None,
-    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None
+    replicated_sharding: Optional[jax.sharding.NamedSharding] = None
 ) -> Array:
     model = eqx.nn.inference_mode(model, True)
 
@@ -256,7 +256,7 @@ def train_from_config(
     reload_opt_state: bool = False,
     # Sharding of devices to run on
     sharding: Optional[jax.sharding.NamedSharding] = None,
-    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
+    replicated_sharding: Optional[jax.sharding.NamedSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
@@ -286,7 +286,7 @@ def train_from_config(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the optimizer state and model from previous checkpoint files. Defaults to starting from scratch.
         
-        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+        `sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
             Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
 
         `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
@@ -492,7 +492,7 @@ def train(
     reload_opt_state: bool = False,
     # Sharding of devices to run on
     sharding: Optional[jax.sharding.NamedSharding] = None,
-    replicated_sharding: Optional[jax.sharding.PositionalSharding] = None,
+    replicated_sharding: Optional[jax.sharding.NamedSharding] = None,
     *,
     # Location to save model, figs, .etc in
     save_dir: Optional[str] = None,
@@ -540,7 +540,7 @@ def train(
         `reload_opt_state` : `bool`, default: `False`
             Whether to reload the model and optimizer state from a previous checkpoint to continue training.
         
-        `sharding` : `Optional[jax.sharding.PositionalSharding]`, default: `None`
+        `sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`
             Optional device sharding for distributed training across multiple devices. Shards sections of batches across each device.
 
         `replicated_sharding` : `Optional[jax.sharding.NamedSharding]`, default: `None`

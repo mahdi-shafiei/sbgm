@@ -18,21 +18,23 @@ def convert_torch_to_in_memory(dataset):
 
 
 def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
+
     key_train, key_valid = jr.split(key)
 
     n_pix = 32 # Native resolution for CIFAR10 
     data_shape = (3, n_pix, n_pix)
+    context_shape = None
     parameter_dim = 1
     n_classes = 10
 
-    scaler = Scaler(x_min=0., x_max=1.)
+    scaler = Normer()
 
     train_transform = transforms.Compose(
         [
             transforms.Resize((n_pix, n_pix)),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(), 
-            transforms.Lambda(scaler.forward) # [0,1] -> [-1,1]
+            transforms.Lambda(scaler.forward) 
         ]
     )
     valid_transform = transforms.Compose(
@@ -64,7 +66,6 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         At = At.astype(jnp.float32)
         Av = Av.astype(jnp.float32)
 
-        # process_fn = Scaler(x_min=Xt.min(), x_max=Xt.max())
         process_fn = Normer(x_mean=Xt.mean(), x_std=Xt.std())
 
         train_dataloader = InMemoryDataLoader(
@@ -76,10 +77,18 @@ def cifar10(path: str, key: Key, *, in_memory: bool = True) -> ScalerDataset:
         process_fn = Scaler(x_min=0., x_max=1.)
 
         train_dataloader = TorchDataLoader(
-            train_dataset, data_shape, parameter_dim=parameter_dim, key=key_train
+            train_dataset, 
+            data_shape=data_shape, 
+            context_shape=context_shape,
+            parameter_dim=parameter_dim, 
+            key=key_train
         )
         valid_dataloader = TorchDataLoader(
-            valid_dataset, data_shape, parameter_dim=parameter_dim, key=key_valid
+            valid_dataset, 
+            data_shape=data_shape, 
+            context_shape=context_shape,
+            parameter_dim=parameter_dim, 
+            key=key_valid
         )
 
     def label_fn(key, n):
