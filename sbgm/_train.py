@@ -16,7 +16,7 @@ from tqdm.auto import trange
 
 from .sde import SDE
 from ._sample import get_eu_sample_fn, get_ode_sample_fn
-from ._misc import (
+from ._utils import (
     make_dirs, 
     plot_sde, 
     plot_train_sample, 

@@ -11,6 +11,11 @@ import numpy as np
 import torch
 
 
+"""
+    Various utilities for creating datasets. 
+"""
+
+
 def expand_if_scalar(x):
     return x[:, jnp.newaxis] if x.ndim == 1 else x
 
@@ -23,25 +28,29 @@ def default(v, d):
     return v if exists(v) else d
 
 
+def stop_grad(x: Array) -> Array:
+    return jax.lax.stop_gradient(x)
+
+
 class Scaler:
-    forward: Callable 
-    reverse: Callable
+    forward: Callable[[Array], Array] 
+    reverse: Callable[[Array], Array]
     def __init__(self, x_min: Scalar | float = 0., x_max: Scalar | float = 1.):
         self.forward = lambda x: 2. * (x - x_min) / (x_max - x_min) - 1.
         self.reverse = lambda y: x_min + (y + 1.) / 2. * (x_max - x_min)
 
 
 class Normer:
-    forward: Callable 
-    reverse: Callable
+    forward: Callable[[Array], Array] 
+    reverse: Callable[[Array], Array]
     def __init__(self, x_mean: Scalar | float = 0., x_std: Scalar | float = 1.):
         self.forward = lambda x: (x - x_mean) / x_std
         self.reverse = lambda y: y * x_std + x_mean
 
 
 class Identity:
-    forward: Callable 
-    reverse: Callable
+    forward: Callable[[Array], Array] 
+    reverse: Callable[[Array], Array]
     def __init__(self):
         self.forward = lambda x: x
         self.reverse = lambda x: x
@@ -161,40 +170,91 @@ class TorchDataLoader(_AbstractDataLoader):
 @jaxtyped(typechecker=typechecker)
 @dataclass
 class ScalerDataset:
+    """
+        Dataset container that wraps dataloaders and preprocessing utilities.
+
+        Parameters
+        ----------
+        name : str
+            A name for the dataset.
+        
+        train_dataloader : TorchDataLoader | InMemoryDataLoader
+            Dataloader instance for training data. Can be a streaming or in-memory loader.
+        
+        valid_dataloader : TorchDataLoader | InMemoryDataLoader
+            Dataloader instance for validation data. Same format as `train_dataloader`.
+        
+        data_shape : Tuple[int, ...]
+            Shape of each data sample (excluding batch dimension), e.g., input shape of training data.
+        
+        context_shape : Tuple[int, ...] or None
+            Shape of each conditioning variable sample (if any). 
+        
+        parameter_dim : int or None
+            Dimensionality of the conditioning parameter space.
+        
+        process_fn : Scaler | Normer | Identity | None
+            Optional preprocessing function applied to the input data (e.g., normalization or standardization).
+        
+        label_fn : Callable
+            Function that generates a batch of context/parameter pairs (Q, A) given a random key and batch size.
+            Typically used during training to retrieve target values.
+
+        Notes
+        -----
+        This class is designed to interface cleanly with JAX training loops and SBI pipelines.
+    """
     name: str
     train_dataloader: TorchDataLoader | InMemoryDataLoader
     valid_dataloader: TorchDataLoader | InMemoryDataLoader
     data_shape: Tuple[int, ...]
-    context_shape: Tuple[int, ...] | None
-    parameter_dim: int | None
-    process_fn: Scaler | Normer | Identity | None
-    label_fn: Callable
+    context_shape: Optional[Tuple[int, ...]]
+    parameter_dim: Optional[int]
+    process_fn: Optional[Scaler | Normer | Identity] 
+    label_fn: Callable[
+        [PRNGKeyArray, int], 
+        Tuple[
+            Optional[Float[Array, "n ..."]], 
+            Optional[Float[Array, "n _"]]
+        ]
+    ]
+
+
+def maybe_convert(a):
+    return np.asarray(a) if isinstance(a, jnp.ndarray) else a
 
 
 class TensorDataset(torch.utils.data.Dataset):
-    def __init__(self, tensors, transform=None):
-        # Tuple of (images, contexts, targets), turn them into tensors
-        self.tensors = tuple(
-            torch.as_tensor(tensor) for tensor in tensors
-        )
-        self.transform = transform
-        assert all(
-            self.tensors[0].size(0) == tensor.size(0) 
-            for tensor in self.tensors
-        )
+    def __init__(self, tensors, x_transform=None, q_transform=None, a_transform=None):
+        self.names = ["x", "q", "a"]
+        self.data = {
+            name: torch.as_tensor(np.copy(maybe_convert(t))) if exists(t) else None
+            for name, t in zip(self.names, tensors)
+        }
+
+        self.transforms = {
+            name: transform if exists(transform) else None
+            for name, transform in zip(self.names, [x_transform, q_transform, a_transform])
+        }
+
+        # Sanity check: all non-None tensors must have same first dimension
+        lengths = [v.shape[0] for v in self.data.values() if v is not None]
+        assert len(set(lengths)) == 1, "All input tensors must have the same length."
 
     def __getitem__(self, index):
-        x = self.tensors[0][index] # Fields
-        q = self.tensors[1][index] # Parameters
-        a = self.tensors[2][index] # Parameters
-
-        if self.transform:
-            x = self.transform(x)
-
-        return x, q, a
+        output = []
+        for key in self.names:
+            tensor = self.data.get(key)
+            if exists(tensor):
+                val = tensor[index]
+                if self.transforms[key]:
+                    val = self.transforms[key](val)
+                val = jnp.asarray(val.numpy())
+                output.append(val)
+        return tuple(output)
 
     def __len__(self):
-        return self.tensors[0].size(0)
+        return next(v.shape[0] for v in self.data.values() if v is not None)
 
 
 @jaxtyped(typechecker=typechecker)
@@ -213,7 +273,7 @@ def dataset_from_tensors(
         Creates a ScalerDataset object from in-memory tensors with optional conditioning and parameter targets.
 
         Splits the data into training and validation subsets, applies optional preprocessing, 
-        and returns a dataset with a label function for downstream usage.
+        and returns a dataset with a label function for choosing conditioning variables for sampling.
 
         Parameters
         ----------
@@ -244,44 +304,52 @@ def dataset_from_tensors(
         -----
         - If `Q` and `A` are both provided, `label_fn` will randomly sample a subset of them.
         - If `in_memory=True`, `InMemoryDataLoader` will be used instead of `TorchDataLoader`.
-        - Requires the custom `ScalerDataset`, `InMemoryDataLoader`, `TorchDataLoader`, and `TensorDataset` classes to be defined elsewhere.
     """
     key_train, key_valid = jr.split(key)
 
     n_train = int(split * X.shape[0])
+
     data_shape = X.shape[1:]  # Exclude the first dimension (n)
     context_shape = Q.shape[1:] if exists(Q) else None
     parameter_dim = A.shape[1] if exists(A) else None
 
     train_set = (
         X[:n_train], 
-        Q[:n_train] if Q is not None else None, 
-        A[:n_train] if A is not None else None,
+        Q[:n_train] if exists(Q) else None, 
+        A[:n_train] if exists(A) else None,
     )
     valid_set = (
         X[n_train:], 
-        Q[n_train:] if Q is not None else None, 
-        A[n_train:] if A is not None else None,
+        Q[n_train:] if exists(Q) else None, 
+        A[n_train:] if exists(A) else None,
     )
 
     def label_fn(
-        Q: Optional[Float[Array, "n ..."]],
-        A: Optional[Float[Array, "n _"]],
         key: PRNGKeyArray, 
-        n: int
-    ) -> Tuple[Array, Array]:
-        if exists(Q) and exists(A):
-            ix = jr.choice(key, jnp.arange(len(Q)), (n,))
-            Q = Q[ix]
-            A = A[ix]
-        return Q, A
+        n: int,
+        Q: Optional[Float[Array, "n ..."]],
+        A: Optional[Float[Array, "n _"]]
+    ) -> Tuple[
+        Optional[Float[Array, "n ..."]], 
+        Optional[Float[Array, "n _"]]
+    ]:
+        if exists(Q):
+            length = len(Q)
+        elif exists(A):
+            length = len(A)
+        else:
+            return None, None
+        ix = jr.choice(key, jnp.arange(length), (n,))
+        _Q = Q[ix] if exists(Q) else None
+        _A = A[ix] if exists(A) else None
+        return _Q, _A
 
     if in_memory:
         train_dataloader = InMemoryDataLoader(
-            *train_set, key=key_train
+            *train_set, process_fn=process_fn, key=key_train
         )
         valid_dataloader = InMemoryDataLoader(
-            *valid_set, key=key_valid
+            *valid_set, process_fn=process_fn, key=key_valid
         )
     else:
         train_dataloader = TorchDataLoader(
@@ -289,6 +357,7 @@ def dataset_from_tensors(
             data_shape=data_shape,
             context_shape=context_shape, 
             parameter_dim=parameter_dim,
+            process_fn=process_fn, 
             key=key_train
         )
         valid_dataloader = TorchDataLoader(
@@ -296,6 +365,7 @@ def dataset_from_tensors(
             data_shape=data_shape,
             context_shape=context_shape, 
             parameter_dim=parameter_dim,
+            process_fn=process_fn, 
             key=key_valid
         )
 
