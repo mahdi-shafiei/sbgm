@@ -10,3 +10,4 @@ _set_transformer.py
 __unet.py
 cifar10.ipynb
 grfs.ipynb
+simple.ipynb
