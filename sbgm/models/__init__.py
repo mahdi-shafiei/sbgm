@@ -2,7 +2,7 @@ from typing import Sequence, Optional
 import equinox as eqx
 from jaxtyping import Key
 import numpy as np
-import ml_collections
+from ml_collections import ConfigDict
 
 from ._mixer import Mixer2d
 from ._mlp import ResidualNetwork 
@@ -13,16 +13,39 @@ from ._dit import DiT
 def get_model(
     model_key: Key, 
     model_type: str, 
-    config: ml_collections.ConfigDict, 
+    config: ConfigDict, 
     data_shape: Sequence[int], 
     context_shape: Optional[Sequence[int]] = None, 
     parameter_dim: Optional[int] = None
 ) -> eqx.Module:
+    """
+        Get the model based on the specified type and configuration.
+
+        Args:
+            model_key: JAX random key for model initialization.
+            model_type: Type of the model to create (e.g., "Mixer", "UNet", "mlp", "DiT").
+            config: Configuration dictionary containing model parameters.
+            data_shape: Shape of the input data (e.g. image dimensions, channels first).
+            context_shape: Shape of the context map, if applicable.
+            parameter_dim: Dimension of the additional conditioning.
+        Returns:
+            An initialized instance of the specified model type.
+
+        Raises:
+            ValueError: If the model type is not recognized.
+    """
+
     # Grab channel assuming 'q' is a map like x
     if context_shape is not None:
         context_channels, *_ = context_shape.shape 
     else:
         context_channels = None
+
+    if model_type not in ["Mixer", "UNet", "mlp", "DiT"]:
+        raise ValueError(
+            f"Model type {model_type} is not recognized. "
+            "Choose from 'Mixer', 'UNet', 'mlp', or 'DiT'."
+        )
 
     if model_type == "Mixer":
         model = Mixer2d(

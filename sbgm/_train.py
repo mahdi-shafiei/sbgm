@@ -8,10 +8,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
-from jaxtyping import Key, Array, Float, PyTree, jaxtyped
+from jaxtyping import Key, Array, Float, Scalar, PyTree, jaxtyped
 from beartype import beartype as typechecker
-from ml_collections import ConfigDict
 import optax
+from ml_collections import ConfigDict
 from tqdm.auto import trange
 
 from .sde import SDE
@@ -69,7 +69,7 @@ def accumulate_gradients_scan(
     n_minibatches: int,
     *,
     grad_fn: Callable
-) -> Tuple[Float[Array, ""], PyTree]:
+) -> Tuple[Scalar, PyTree]:
     batch_size = xqat[0].shape[0]
     minibatch_size = batch_size // n_minibatches
 
@@ -124,9 +124,9 @@ def single_loss_fn(
     x: Float[Array, "..."], 
     q: Optional[Float[Array, "..."]], 
     a: Optional[Float[Array, "..."]],
-    t: Float[Array, ""],
+    t: Scalar,
     key: Key
-) -> Float[Array, ""]:
+) -> Scalar:
     key_noise, key_apply = jr.split(key)
     mean, std = sde.marginal_prob(x, t) 
     noise = jr.normal(key_noise, x.shape)
@@ -183,7 +183,7 @@ def make_step(
     sharding: Optional[jax.sharding.NamedSharding] = None,
     replicated_sharding: Optional[jax.sharding.NamedSharding] = None
 ) -> Tuple[
-    Float[Array, ""], Model, Key[jnp.ndarray, "..."], optax.OptState
+    Scalar, Model, Key[jnp.ndarray, "..."], optax.OptState
 ]:
     model = eqx.nn.inference_mode(model, False)
 

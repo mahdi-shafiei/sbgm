@@ -167,6 +167,42 @@ class TorchDataLoader(_AbstractDataLoader):
                 )
 
 
+def maybe_convert(a):
+    return np.asarray(a) if isinstance(a, jnp.ndarray) else a
+
+
+class TensorDataset(torch.utils.data.Dataset):
+    def __init__(self, tensors, x_transform=None, q_transform=None, a_transform=None):
+        self.names = ["x", "q", "a"]
+        self.data = {
+            name: torch.as_tensor(np.copy(maybe_convert(t))) if exists(t) else None
+            for name, t in zip(self.names, tensors)
+        }
+
+        self.transforms = {
+            name: transform if exists(transform) else None
+            for name, transform in zip(self.names, [x_transform, q_transform, a_transform])
+        }
+
+        # Sanity check: all non-None tensors must have same first dimension
+        lengths = [v.shape[0] for v in self.data.values() if v is not None]
+        assert len(set(lengths)) == 1, "All input tensors must have the same length."
+
+    def __getitem__(self, index):
+        output = []
+        for key in self.names:
+            tensor = self.data.get(key)
+            if exists(tensor):
+                val = tensor[index]
+                if self.transforms[key]:
+                    val = self.transforms[key](val)
+                output.append(val)
+        return tuple(output)
+
+    def __len__(self):
+        return next(v.shape[0] for v in self.data.values() if v is not None)
+
+
 @jaxtyped(typechecker=typechecker)
 @dataclass
 class ScalerDataset:
@@ -218,43 +254,6 @@ class ScalerDataset:
             Optional[Float[Array, "n _"]]
         ]
     ]
-
-
-def maybe_convert(a):
-    return np.asarray(a) if isinstance(a, jnp.ndarray) else a
-
-
-class TensorDataset(torch.utils.data.Dataset):
-    def __init__(self, tensors, x_transform=None, q_transform=None, a_transform=None):
-        self.names = ["x", "q", "a"]
-        self.data = {
-            name: torch.as_tensor(np.copy(maybe_convert(t))) if exists(t) else None
-            for name, t in zip(self.names, tensors)
-        }
-
-        self.transforms = {
-            name: transform if exists(transform) else None
-            for name, transform in zip(self.names, [x_transform, q_transform, a_transform])
-        }
-
-        # Sanity check: all non-None tensors must have same first dimension
-        lengths = [v.shape[0] for v in self.data.values() if v is not None]
-        assert len(set(lengths)) == 1, "All input tensors must have the same length."
-
-    def __getitem__(self, index):
-        output = []
-        for key in self.names:
-            tensor = self.data.get(key)
-            if exists(tensor):
-                val = tensor[index]
-                if self.transforms[key]:
-                    val = self.transforms[key](val)
-                val = jnp.asarray(val.numpy())
-                output.append(val)
-        return tuple(output)
-
-    def __len__(self):
-        return next(v.shape[0] for v in self.data.values() if v is not None)
 
 
 @jaxtyped(typechecker=typechecker)
