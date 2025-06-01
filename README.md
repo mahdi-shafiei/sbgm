@@ -28,6 +28,51 @@ Modern cutting-edge diffusion models (see citations) express both the forward an
 For any SDE of the form 
 
 $$
+\text{d}x = f(x, t)\text{d}t + g(t)\text{d}w,
+$$
+
+the reverse of the SDE from noise to data is given by 
+
+$$
+\text{d}x = [f(x, t) - g(t)^2\nabla_{x}\log p_t(x)]\text{d}t + g(t)\text{d}w.
+$$
+
+For every SDE there exists an associated ordinary differential equation (ODE)
+
+$$
+\text{d}x = [f(x, t)\text{d}t - \frac{1}{2}g(t)^2\nabla_{x}\log p_t(x)]\text{d}t,
+$$
+
+where the trajectories of the SDE and ODE have the same marginal PDFs $p_t(x)$.
+
+The Stein score of the marginal probability distributions over $t$ is approximated with a neural network $\nabla_{x}\log p_t(x)\approx s_{\theta}(x(t), t)$. The parameters of the neural network are fit by minimising the score-matching loss.
+
+### Computing log-likelihoods with diffusion models
+
+For each SDE there exists a deterministic ODE with marginal likelihoods $p_t(x)$ that match the SDE for all time $t$
+
+$$
+\text{d}x = [f(x, t)\text{d}t - \frac{1}{2}g(t)^2\nabla_{x}\log p_t(x)]\text{d}t = f'(x(t), t)\text{d}t.
+$$
+
+The continuous normalizing flow formalism allows the ODE to be expressed as
+
+$$
+\frac{\partial}{\partial t} \log p(x(t)) = \nabla_{x} \cdot f'(x(t), t),
+$$
+
+which gives the log-likelihood of a datapoint $x$ as 
+
+$$
+\log p(x(0)) = \log p(x(T)) + \int_{t=0}^{t=T}\text{d}t \; \nabla_{x}\cdot f'(x, t).
+$$
+
+Note that maximum-likelihood training is prohibitively expensive for SDE based diffusion models.
+
+
+<!-- For any SDE of the form 
+
+$$
 \text{d}\boldsymbol{x} = f(\boldsymbol{x}, t)\text{d}t + g(t)\text{d}\boldsymbol{w},
 $$
 
@@ -67,7 +112,7 @@ $$
 \log p(\boldsymbol{x}(0)) = \log p(\boldsymbol{x}(T)) + \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}}\cdot f'(\boldsymbol{x}, t).
 $$
 
-Note that maximum-likelihood training is prohibitively expensive for SDE based diffusion models.
+Note that maximum-likelihood training is prohibitively expensive for SDE based diffusion models. -->
 
 ### Usage
 

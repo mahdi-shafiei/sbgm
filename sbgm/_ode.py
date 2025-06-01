@@ -257,6 +257,7 @@ def get_log_likelihood_fn(
     data_shape: Sequence[int], 
     exact_log_prob: bool = False,
     n_eps: Optional[int] = None,
+    eps_noise_type: Literal["gaussian", "rademacher"] = "gaussian",
     solver: Optional[dfx.AbstractSolver] = None
 ) -> Callable[
     [
@@ -392,6 +393,7 @@ def get_log_likelihood_fn(
             a, 
             exact_log_prob=exact_log_prob, 
             n_eps=n_eps, 
+            eps_noise_type=eps_noise_type,
             solver=solver
         )
         return log_probs

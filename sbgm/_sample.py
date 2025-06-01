@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
-from jaxtyping import Key, Array, Float, jaxtyped
+from jaxtyping import PRNGKeyArray, Array, Float, jaxtyped
 from beartype import beartype as typechecker
 
 from .sde import SDE
@@ -24,7 +24,7 @@ def single_ode_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
     data_shape: Sequence[int], 
-    key: Key[jnp.ndarray, ""],
+    key: PRNGKeyArray,
     q: Optional[Float[Array, "..."]] = None,
     a: Optional[Float[Array, "..."]] = None,
     solver: Optional[dfx.AbstractSolver] = None
@@ -108,7 +108,7 @@ def single_eu_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
     data_shape: Sequence[int], 
-    key: Key[jnp.ndarray, ""], 
+    key: PRNGKeyArray, 
     q: Optional[Float[Array, "..."]] = None,
     a: Optional[Float[Array, "..."]] = None,
     T_sample: int = 1_000
@@ -313,7 +313,7 @@ def get_ode_sample_fn(
           which can be used to condition the SDE dynamics.
     """
     def _ode_sample_fn(
-        key: Key, 
+        key: PRNGKeyArray, 
         q: Optional[Float[Array, "..."]] = None, 
         a: Optional[Float[Array, "..."]] = None, 
     ) -> Array:
