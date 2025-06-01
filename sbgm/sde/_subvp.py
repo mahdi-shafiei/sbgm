@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
-from jaxtyping import Key, Array, Float, jaxtyped
+from jaxtyping import PRNGKeyArray, Array, Float, Scalar, jaxtyped
 from beartype import beartype as typechecker
 
 from ._sde import SDE, _get_log_prob_fn, Time, TimeFn
@@ -11,7 +11,7 @@ from ._sde import SDE, _get_log_prob_fn, Time, TimeFn
 
 def get_beta_fn(beta_integral_fn: TimeFn | eqx.Module) -> TimeFn:
     """ Obtain beta function from a beta integral. """
-    def _beta_fn(t: Time) -> Float[Array, ""]:
+    def _beta_fn(t: Time) -> Scalar:
         _, beta = jax.jvp(
             beta_integral_fn, 
             primals=(t,), 
@@ -47,7 +47,7 @@ class SubVPSDE(SDE):
         self.weight_fn = weight_fn
 
     @jaxtyped(typechecker=typechecker)
-    def sde(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
+    def sde(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Scalar]:
         """ 
             dx = f(x, t) * dt + g(t) * dw 
             dx = -0.5 * beta(t) * x * dt + sqrt(beta(t) * (1 - exp(-2 * int[beta(s)]))) * dw
@@ -59,7 +59,7 @@ class SubVPSDE(SDE):
         return drift, diffusion
 
     @jaxtyped(typechecker=typechecker)
-    def marginal_prob(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Float[Array, ""]]:
+    def marginal_prob(self, x: Float[Array, "..."], t: Time) -> Tuple[Float[Array, "..."], Scalar]:
         """ 
             Sub-VP SDE p_t(x(t)|x(0)) is 
                 x(t) ~ G[x(t)|mu(x(0), t), sigma^2(t)]
@@ -73,7 +73,7 @@ class SubVPSDE(SDE):
         return mean, std
 
     @jaxtyped(typechecker=typechecker)
-    def weight(self, t: Time, likelihood_weight: bool = False) -> Float[Array, ""]:
+    def weight(self, t: Time, likelihood_weight: bool = False) -> Scalar:
         # Likelihood weighting: above Eq 8 https://arxiv.org/pdf/2101.09258.pdf
         if self.weight_fn is not None and not likelihood_weight:
             weight = self.weight_fn(t)
@@ -84,8 +84,8 @@ class SubVPSDE(SDE):
                 weight = jnp.square(1. - jnp.exp(-self.beta_integral_fn(t)))
         return weight 
 
-    def prior_sample(self, key: Key[jnp.ndarray, "..."], shape: Sequence[int]) -> Float[Array, "..."]:
+    def prior_sample(self, key: PRNGKeyArray, shape: Sequence[int]) -> Float[Array, "..."]:
         return jr.normal(key, shape)
 
-    def prior_log_prob(self, z: Float[Array, "..."]) -> Float[Array, ""]:
+    def prior_log_prob(self, z: Float[Array, "..."]) -> Scalar:
         return _get_log_prob_fn(scale=1.)(z)
