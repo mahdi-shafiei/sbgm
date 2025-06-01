@@ -44,7 +44,7 @@ def single_ode_sample_fn(
         `data_shape` : `Sequence[int]`
             Shape of the data to be sampled, used for constructing the prior sample.
         
-        `key` : `Key`
+        `key` : `PRNGKeyArray`
             A JAX random key used to generate the prior sample.
         
         `q` : `Optional[Array]`, default: `None`
@@ -128,7 +128,7 @@ def single_eu_sample_fn(
         `data_shape` : `Sequence[int]`
             Shape of the data to be sampled, used for constructing the prior sample.
         
-        `key` : `Key`
+        `key` : `PRNGKeyArray`
             A JAX random key used to generate the prior sample and noise at each time step.
         
         `q` : `Optional[Array]`, default: `None`
@@ -233,7 +233,7 @@ def get_eu_sample_fn(
             conditioning variables `q` and `a`. It has the following signature:
             
             ```python
-            def _eu_sample_fn(key: Key, q: Optional[Array], a: Optional[Array]) -> Array
+            def _eu_sample_fn(key: PRNGKeyArray, q: Optional[Array], a: Optional[Array]) -> Array
             ```
 
             This function uses `single_eu_sample_fn` to generate a sample at time `t0`.
@@ -255,7 +255,7 @@ def get_eu_sample_fn(
           more accurate results.
     """
     def _eu_sample_fn(
-        key: Key, 
+        key: PRNGKeyArray, 
         q: Optional[Float[Array, "..."]] = None, 
         a: Optional[Float[Array, "..."]] = None, 
     ) -> Array: 
@@ -293,7 +293,7 @@ def get_ode_sample_fn(
             conditioning variables `q` and `a`. It has the following signature:
             
             ```python
-            def _ode_sample_fn(key: Key, q: Optional[Array], a: Optional[Array]) -> Array
+            def _ode_sample_fn(key: PRNGKeyArray, q: Optional[Array], a: Optional[Array]) -> Array
             ```
 
             This function uses `single_ode_sample_fn` to generate a sample at time `t0`.
