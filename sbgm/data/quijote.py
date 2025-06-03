@@ -10,7 +10,7 @@ from torchvision import transforms
 
 from .utils import Scaler, ScalerDataset, TorchDataLoader, InMemoryDataLoader
 
-DATA_DIR = "/project/ls-gruen/users/jed.homer/data/fields/"
+DATA_DIR = os.environ.get("DATA_DIR", "")
 
 
 class MapDataset(torch.utils.data.Dataset):
@@ -39,11 +39,17 @@ class MapDataset(torch.utils.data.Dataset):
 
 
 def get_quijote_data(n_pix: int) -> Tuple[Array, Array]:
+
+    assert (DATA_DIR is not None) and (DATA_DIR != ""), (
+        "Note: you must supply a path with the Quijote hypercube parameters and simulations."
+    )
+
     X = np.load(os.path.join(DATA_DIR, "quijote_fields.npy"))[:, np.newaxis, ...]
     A = np.load(os.path.join(DATA_DIR, "quijote_parameters.npy"))
 
     dx = int(256 / n_pix)
     X = X.reshape((-1, 1, n_pix, dx, n_pix, dx)).mean(axis=(3, 5))
+
     return X, A
 
 
@@ -63,55 +69,17 @@ def quijote(key, n_pix, split=0.9):
 
     print("Quijote data:", X.shape, A.shape)
 
-    min = X.min()
-    max = X.max()
+    # min = X.min()
+    # max = X.max()
     # X = (X - min) / (max - min) # ... -> [0, 1]
     # X = 2.0 * (X - min) / (max - min) - 1.0 # ... -> [-1, 1]
     X = (X - X.mean()) / X.std()
 
-    # min = Q.min()
-    # max = Q.max()
-    # Q = (Q - min) / (max - min) # ... -> [0, 1]
+    A = (A - A.min()) / (A.max() - A.min()) # ... -> [0, 1]
 
     n_train = int(split * len(X))
 
     # scaler = Scaler() # [0,1] -> [-1,1]
-
-    # train_transform = transforms.Compose(
-    #     [
-    #         transforms.RandomHorizontalFlip(),
-    #         transforms.RandomVerticalFlip(),
-    #         # transforms.Lambda(scaler.forward)
-    #     ]
-    # )
-    # valid_transform = transforms.Compose(
-    #     [
-    #         transforms.RandomHorizontalFlip(),
-    #         transforms.RandomVerticalFlip(),
-    #         # transforms.Lambda(scaler.forward)
-    #     ]
-    # )
-
-    # train_dataset = MapDataset(
-    #     (X[:n_train], A[:n_train]), transform=train_transform
-    # )
-    # valid_dataset = MapDataset(
-    #     (X[n_train:], A[n_train:]), transform=valid_transform
-    # )
-    # train_dataloader = TorchDataLoader(
-    #     train_dataset, 
-    #     data_shape=data_shape, 
-    #     context_shape=None, 
-    #     parameter_dim=parameter_dim, 
-    #     key=key_train
-    # )
-    # valid_dataloader = TorchDataLoader(
-    #     valid_dataset, 
-    #     data_shape=data_shape, 
-    #     context_shape=None, 
-    #     parameter_dim=parameter_dim, 
-    #     key=key_valid
-    # )
 
     # Don't have many maps
     train_dataloader = InMemoryDataLoader(

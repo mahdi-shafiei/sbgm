@@ -2,81 +2,24 @@ import jax
 import jax.numpy as jnp 
 import jax.random as jr
 import optax
-from datasets import load_dataset
 import matplotlib.pyplot as plt 
 from einops import rearrange
 
 import sbgm
-from data.utils import Normer, dataset_from_tensors
-
-key = jr.key(0)
-key, key_X, key_model, key_train = jr.split(key, 4)
-
-"""
-    Dataset example
-    - Create a dataset from tensors specified by a user
-"""
-
-n_channels = 1
-n_pix = 32
-parameter_dim = 10
-
-X = jr.normal(key, (1000, n_channels, n_pix, n_pix))
-A = jnp.ones((1000, parameter_dim))
-
-dataset = sbgm.data.utils.dataset_from_tensors(
-    X=X, A=A, key=key, in_memory=True, name="dataset"
-)
-
-print(vars(dataset))
-
-"""
-    Dataset example with HuggingFace datasets
-    - Load a dataset from HuggingFace datasets, preprocess it, and create a dataset object
-"""
-
-EuroSAT_RGB = load_dataset("blanchon/EuroSAT_RGB").with_format("jax")
-
-print(EuroSAT_RGB)
-
-X = jnp.concatenate(
-    [
-        EuroSAT_RGB["train"]["image"], 
-        EuroSAT_RGB["validation"]["image"], 
-        EuroSAT_RGB["test"]["image"]
-    ],
-    dtype=jnp.float32
-) 
-X = jnp.transpose(X / 255., (0, 3, 1, 2))
-
-A = jnp.concatenate(
-    [
-        EuroSAT_RGB["train"]["label"], 
-        EuroSAT_RGB["validation"]["label"], 
-        EuroSAT_RGB["test"]["label"]
-    ],
-    dtype=jnp.float32
-)[:, jnp.newaxis]
-
-print("Images / parameters shape:", X.shape, A.shape)
-
-dataset = sbgm.data.utils.dataset_from_tensors(
-    X=X, 
-    A=A, 
-    key=key, 
-    in_memory=True, 
-    process_fn=sbgm.data.utils.Normer(jnp.mean(X, axis=0), jnp.std(X, axis=0)),
-    name="satellite"
-)
-
-_, n_channels, n_pix, n_pix = X.shape
-_, parameter_dim = A.shape
-
-print(vars(dataset))
 
 """
     Configuration
 """
+
+n_devices = len(jax.devices())
+
+key = jr.key(0)
+
+data_key, model_key, train_key = jr.split(key, 3)
+
+dataset = sbgm.data.quijote(data_key, n_pix=64)
+
+(n_channels, n_pix, n_pix) = dataset.data_shape
 
 # Data
 dataset_name          = dataset.name 
@@ -105,11 +48,13 @@ eu_sample             = True # Euler-Maruyama sample the SDE during training
 # Optimisation hyperparameters
 start_step            = 0
 n_steps               = 200_000
-batch_size            = 200 * len(jax.devices())
+batch_size            = 50 * len(jax.devices())
 sample_and_save_every = 2_000
 lr                    = 3e-4
 opt                   = optax.adamw
 opt_kwargs            = {} 
+
+cmap                  = "gist_stern"
 
 # Multiple GPU training if you are so inclined
 sharding, replicated_sharding = sbgm.shard.get_shardings()
@@ -125,8 +70,8 @@ model = sbgm.models.DiT(
     patch_size=patch_size,
     depth=depth,
     n_heads=n_heads,
-    a_dim=parameter_dim,
-    key=key_model
+    a_dim=dataset.parameter_dim,
+    key=model_key
 )
 
 sde = sbgm.sde.VPSDE(
@@ -143,7 +88,7 @@ sde = sbgm.sde.VPSDE(
 
 # Fit model to dataset
 model = sbgm.train.train(
-    key_train,
+    train_key,
     model,
     sde,
     dataset,
@@ -158,6 +103,7 @@ model = sbgm.train.train(
     sample_and_save_every=sample_and_save_every,
     sharding=sharding,
     replicated_sharding=replicated_sharding,
+    cmap=cmap,
     save_dir="./"
 )
 

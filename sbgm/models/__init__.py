@@ -100,4 +100,5 @@ def get_model(
             a_dim=parameter_dim,    # Number of parameters in power spectrum model
             key=model_key
         )
+
     return model

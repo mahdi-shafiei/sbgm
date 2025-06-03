@@ -148,7 +148,7 @@ def single_eu_sample_fn(
 
         Notes:
         ------
-        - The function simulates the reverse diffusion process starting from a prior sample `xT` at time `t1`, 
+        - The function simulates the reverse diffusion process starting from a prior sample `x_T` at time `t1`, 
           and evolves it to `t0` using the Euler-Maruyama method.
         - At each time step `i`, the function applies the Euler-Maruyama update rule: 
           `x <- x + [f(x, t) - g^2(t) * score(x, t, q)] * dt + g(t) * sqrt(dt) * eps_t`, 
@@ -169,7 +169,7 @@ def single_eu_sample_fn(
     time_steps = jnp.linspace(sde.t1, sde.t0, T_sample) # Reversed time
     step_size = (sde.t1 - sde.t0) / T_sample 
 
-    xT = sde.prior_sample(key, data_shape) 
+    x_T = sde.prior_sample(key, data_shape) 
     reverse_sde = sde.reverse(model, probability_flow=False)
 
     def marginal(i, val):
@@ -194,7 +194,7 @@ def single_eu_sample_fn(
         return mean_x, x
 
     mean_x, x = jax.lax.fori_loop(
-        0, T_sample, marginal, init_val=(jnp.zeros_like(xT), xT)
+        0, T_sample, marginal, init_val=(jnp.zeros_like(x_T), x_T)
     )
 
     # Do not include any noise in the last sampling step.
@@ -248,7 +248,7 @@ def get_eu_sample_fn(
         Notes:
         ------
         - The returned function calls `single_eu_sample_fn` to simulate the reverse diffusion process starting from 
-          a prior sample `xT` at time `t1`, and evolves it to `t0` using the Euler-Maruyama method.
+          a prior sample `x_T` at time `t1`, and evolves it to `t0` using the Euler-Maruyama method.
         - The sample function takes in a `key` for random sampling, and optionally `q` and `a` as conditioning variables, 
           which can be used to condition the SDE dynamics.
         - The number of discretization steps `T_sample` controls the fidelity of the sample, with higher values providing 

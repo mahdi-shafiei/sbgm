@@ -13,12 +13,12 @@ def quijote_config():
 
     # Model
     config.model = model = ml_collections.ConfigDict()
-    model.model_type             = "Mixer"
+    model.model_type             = "DiT"
     model.patch_size             = 2
-    model.hidden_size            = 1024
-    model.mix_patch_size         = 512
-    model.mix_hidden_size        = 1024
-    model.num_blocks             = 5
+    model.channels               = 1
+    model.depth                  = 3
+    model.embed_dim              = 256
+    model.n_heads                = 4
     model.t1                     = 10.
     model.final_activation       = None #"tanh"
 

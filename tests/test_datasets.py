@@ -1,7 +1,7 @@
 import jax.random as jr
 import jax.numpy as jnp
 
-from data.utils import Normer, dataset_from_tensors
+from sbgm.data.utils import Normer, Scaler, dataset_from_tensors
 
 
 def test_dataset_from_tensors():
@@ -24,6 +24,8 @@ def test_dataset_from_tensors():
 
     for i, (x, q, a) in zip(range(10), dataset.train_dataloader.loop(10)): 
         continue
+
+    process_fn = Scaler(jnp.min(X, axis=0), jnp.max(X, axis=0))
 
     dataset = dataset_from_tensors(
         X=X, Q=Q, A=A, key=key, process_fn=process_fn, in_memory=False, name="dataset"

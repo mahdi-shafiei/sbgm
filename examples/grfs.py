@@ -7,7 +7,6 @@ from einops import rearrange
 import matplotlib.pyplot as plt
 
 import sbgm
-from data import grfs
 
 # Load (data) and save (model, samples & optimiser state) directories 
 datasets_path = "../datasets/"
@@ -74,7 +73,7 @@ opt_kwargs            = {}
 """
 
 # Dataset object of training data and loaders
-dataset = grfs(data_key, n_pix=n_pix, n_fields=10000)
+dataset = sbgm.data.grfs(data_key, n_pix=n_pix, n_fields=10000)
 
 n_plot = 8 # Grid side length in images
 cmap = "coolwarm"
