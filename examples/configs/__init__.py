@@ -6,10 +6,10 @@ from .moons import moons_config
 from .grfs import grfs_config
 
 __all__ = [
-    quijote_config, 
-    mnist_config,
-    cifar10_config,
-    flowers_config,
-    moons_config,
-    grfs_config
+    "quijote_config", 
+    "mnist_config",
+    "cifar10_config",
+    "flowers_config",
+    "moons_config",
+    "grfs_config"
 ]

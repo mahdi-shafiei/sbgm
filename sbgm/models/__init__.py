@@ -1,5 +1,4 @@
 from typing import Sequence, Optional
-import equinox as eqx
 from jaxtyping import Key
 import numpy as np
 from ml_collections import ConfigDict
@@ -17,7 +16,7 @@ def get_model(
     data_shape: Sequence[int], 
     context_shape: Optional[Sequence[int]] = None, 
     parameter_dim: Optional[int] = None
-) -> eqx.Module:
+) -> Mixer2d | ResidualNetwork | UNet | DiT:
     """
         Get the model based on the specified type and configuration.
 

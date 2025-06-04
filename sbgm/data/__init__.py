@@ -7,14 +7,14 @@ from .flowers import flowers
 from .moons import moons
 from .grfs import grfs
 from .quijote import quijote
-from .utils import Scaler, ScalerDataset, InMemoryDataLoader, TorchDataLoader
+from .utils import Normer, Identity, Scaler, ScalerDataset, InMemoryDataLoader, TorchDataLoader
 
 
 def get_dataset(
     datasets_path: str,
     key: Key, 
     config: ConfigDict,
-    dataset_kwargs: dict
+    dataset_kwargs: dict = {}
 ) -> ScalerDataset:
 
     dataset_name = config.dataset_name.lower()

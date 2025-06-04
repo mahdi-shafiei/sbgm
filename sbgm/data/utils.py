@@ -10,14 +10,11 @@ from beartype import beartype as typechecker
 import numpy as np
 import torch
 
+typecheck = jaxtyped(typechecker=typechecker)
 
 """
     Various utilities for creating datasets. 
 """
-
-
-def expand_if_scalar(x):
-    return x[:, jnp.newaxis] if x.ndim == 1 else x
 
 
 def exists(v):
@@ -32,7 +29,30 @@ def stop_grad(x: Array) -> Array:
     return jax.lax.stop_gradient(x)
 
 
+def maybe_convert(a: np.ndarray | Array) -> np.ndarray:
+    return np.asarray(a) if isinstance(a, jnp.ndarray) else a
+
+
+def expand_if_scalar(x: Array) -> Array:
+    return x[:, jnp.newaxis] if x.ndim == 1 else x
+
+
 class Scaler:
+    """
+        Scales input data to the range [-1, 1] and reverses it back to the original range.
+
+        This is a linear scaling transformation defined by:
+            forward(x) = 2 * (x - x_min) / (x_max - x_min) - 1
+            reverse(y) = x_min + (y + 1) / 2 * (x_max - x_min)
+
+        Attributes:
+            forward (Callable[[Array], Array]): Function to scale input to [-1, 1].
+            reverse (Callable[[Array], Array]): Function to reverse scaling back to original range.
+
+        Args:
+            x_min (Scalar | float, optional): Minimum value of the input range. Defaults to 0.
+            x_max (Scalar | float, optional): Maximum value of the input range. Defaults to 1.
+    """
     forward: Callable[[Array], Array] 
     reverse: Callable[[Array], Array]
     def __init__(self, x_min: Scalar | float = 0., x_max: Scalar | float = 1.):
@@ -43,12 +63,34 @@ class Scaler:
 class Normer:
     forward: Callable[[Array], Array] 
     reverse: Callable[[Array], Array]
+    """
+        Normalizes input data to have zero mean and unit variance, and reverses the transformation.
+
+        This is a standard z-score normalization defined by:
+            forward(x) = (x - x_mean) / x_std
+            reverse(y) = y * x_std + x_mean
+
+        Attributes:
+            forward (Callable[[Array], Array]): Function to normalize input.
+            reverse (Callable[[Array], Array]): Function to denormalize back to original scale.
+
+        Args:
+            x_mean (Scalar | float, optional): Mean of the original data. Defaults to 0.
+            x_std (Scalar | float, optional): Standard deviation of the original data. Defaults to 1.
+    """
     def __init__(self, x_mean: Scalar | float = 0., x_std: Scalar | float = 1.):
         self.forward = lambda x: (x - x_mean) / x_std
         self.reverse = lambda y: y * x_std + x_mean
 
 
 class Identity:
+    """
+        Identity transformation: does nothing to the input.
+
+        Attributes:
+            forward (Callable[[Array], Array]): Identity function, returns input unchanged.
+            reverse (Callable[[Array], Array]): Identity function, returns input unchanged.
+    """
     forward: Callable[[Array], Array] 
     reverse: Callable[[Array], Array]
     def __init__(self):
@@ -70,6 +112,26 @@ class _AbstractDataLoader(metaclass=abc.ABCMeta):
 
 
 class InMemoryDataLoader(_AbstractDataLoader):
+    """
+        A simple in-memory data loader that yields randomly permuted batches of data
+        from arrays stored in memory. Optionally applies a preprocessing function
+        to the input data.
+
+        Attributes:
+            X (Array): Input data array of shape (N, ...).
+            Q (Optional[Array]): Optional conditioning data array.
+            A (Optional[Array]): Optional conditioning data array.
+            process_fn (Scaler | Normer | Identity): Optional preprocessing function to apply to X.
+            key (PRNGKeyArray): JAX PRNG key for shuffling the data.
+
+        Args:
+            X (np.ndarray | Array): Input dataset of shape (N, ...).
+            Q (Optional[np.ndarray | Array], optional): Optional auxiliary data. Defaults to None.
+            A (Optional[np.ndarray | Array], optional): Optional additional data. Defaults to None.
+            process_fn (Optional[Scaler | Normer | Identity], optional): A preprocessing object with
+                a `.forward()` method to apply to each batch of `X`. Defaults to Identity().
+            key (PRNGKeyArray): JAX PRNG key used for random shuffling.
+    """
     def __init__(
         self, 
         X: np.ndarray | Array, 
@@ -88,6 +150,22 @@ class InMemoryDataLoader(_AbstractDataLoader):
     def loop(
         self, batch_size: int
     ) -> Generator[Tuple[Array, Optional[Array], Optional[Array]], None, None]:
+        """
+            Infinite generator yielding batches of data randomly sampled without replacement
+            from the in-memory dataset.
+
+            Args:
+                batch_size (int): Number of samples per batch.
+
+            Yields:
+                Tuple[Array, Optional[Array], Optional[Array]]: A tuple containing:
+                    - A batch of input data (after applying `process_fn`, if provided),
+                    - A batch of optional conditioning data Q (if present),
+                    - A batch of optional conditioning data A (if present).
+
+            Raises:
+                ValueError: If the batch size is larger than the dataset size.
+        """
         dataset_size = self.X.shape[0]
         if batch_size > dataset_size:
             raise ValueError("Batch size larger than dataset size")
@@ -112,6 +190,29 @@ class InMemoryDataLoader(_AbstractDataLoader):
 
 
 class TorchDataLoader(_AbstractDataLoader):
+    """
+        A data loader that wraps a PyTorch Dataset and yields batches of data as JAX arrays.
+        Optionally applies a preprocessing function to the input data and handles optional
+        context and parameter targets.
+
+        Attributes:
+            dataset (torch.utils.data.Dataset): A PyTorch-compatible dataset, 
+                returning tuples (x,) or (x, q), (x, a), or (x, q, a).
+            context_shape (Optional[Sequence[int]]): Shape of context variable Q, if present.
+            parameter_dim (Optional[int]): Dimensionality of parameter variable A, if present.
+            seed (int): Seed used for deterministic shuffling via `torch.Generator`.
+            process_fn (Scaler | Normer | Identity): Optional preprocessing object with a `.forward()` method.
+            num_workers (Optional[int]): Number of worker processes for data loading. Overrides `num_workers` in `loop` if set.
+
+        Args:
+            dataset (torch.utils.data.Dataset): Dataset object that returns tuples (x,), (x, q), (x, a), or (x, q, a).
+            data_shape (Sequence[int]): Shape of the input data `x`.
+            context_shape (Optional[Sequence[int]]): Shape of the optional context data `q`. Use `None` if not applicable.
+            parameter_dim (Optional[int]): Dimensionality of the optional parameter data `a`. Use `None` if not applicable.
+            process_fn (Optional[Scaler | Normer | Identity], optional): Preprocessing function to apply to `x`. Defaults to Identity().
+            num_workers (Optional[int], optional): Number of workers for data loading. Defaults to None.
+            key (PRNGKeyArray): JAX PRNG key used to generate a reproducible torch seed.
+    """
     def __init__(
         self, 
         dataset: torch.utils.data.Dataset, 
@@ -135,6 +236,21 @@ class TorchDataLoader(_AbstractDataLoader):
     ) -> Generator[
         Tuple[Array, Optional[Array], Optional[Array]], None, None
     ]:
+        """
+            Infinite generator that yields batches from the dataset using PyTorch's DataLoader.
+            Shuffles the data each epoch and converts outputs to JAX arrays.
+
+            Args:
+                batch_size (int): Number of samples per batch.
+                num_workers (int, optional): Number of worker processes to use for loading. Ignored if `self.num_workers` is set.
+
+            Yields:
+                Tuple[Array, Optional[Array], Optional[Array]]:
+                    A tuple containing:
+                    - A batch of input data (processed if `process_fn` is set),
+                    - A batch of optional context data `q` (if `context_shape` is set),
+                    - A batch of optional parameter data `a` (if `parameter_dim` is set).
+        """
         generator = torch.Generator().manual_seed(self.seed)
         dataloader = torch.utils.data.DataLoader(
             self.dataset,
@@ -167,11 +283,29 @@ class TorchDataLoader(_AbstractDataLoader):
                 )
 
 
-def maybe_convert(a):
-    return np.asarray(a) if isinstance(a, jnp.ndarray) else a
-
-
 class TensorDataset(torch.utils.data.Dataset):
+    """
+        A PyTorch-style dataset that holds in-memory tensors for inputs (x),
+        optional context (q), and optional parameters (a), with optional per-variable transforms.
+
+        This dataset supports variable combinations: (x,), (x, q), (x, a), or (x, q, a).
+
+        Attributes:
+            names (List[str]): The names of the data slots: "x", "q", and "a".
+            data (Dict[str, Optional[torch.Tensor]]): Dictionary mapping names to tensors, or None.
+            transforms (Dict[str, Optional[Callable]]): Optional transforms for each tensor.
+
+        Args:
+            tensors (Tuple[Union[np.ndarray, torch.Tensor, None], ...]):
+                A tuple of up to three tensors corresponding to (x, q, a).
+                Each can be a NumPy array, Torch tensor, or None.
+            x_transform (Callable, optional): Optional transform to apply to x at retrieval time.
+            q_transform (Callable, optional): Optional transform to apply to q at retrieval time.
+            a_transform (Callable, optional): Optional transform to apply to a at retrieval time.
+
+        Raises:
+            AssertionError: If any non-None tensor has a mismatched first dimension.
+    """
     def __init__(self, tensors, x_transform=None, q_transform=None, a_transform=None):
         self.names = ["x", "q", "a"]
         self.data = {
@@ -203,7 +337,7 @@ class TensorDataset(torch.utils.data.Dataset):
         return next(v.shape[0] for v in self.data.values() if v is not None)
 
 
-@jaxtyped(typechecker=typechecker)
+@typecheck
 @dataclass
 class ScalerDataset:
     """
@@ -256,7 +390,7 @@ class ScalerDataset:
     ]
 
 
-@jaxtyped(typechecker=typechecker)
+@typecheck
 def dataset_from_tensors(
     X: Float[Array, "n ..."],
     Q: Optional[Float[Array, "n ..."]] = None,
@@ -305,6 +439,8 @@ def dataset_from_tensors(
         - If `in_memory=True`, `InMemoryDataLoader` will be used instead of `TorchDataLoader`.
     """
     key_train, key_valid = jr.split(key)
+
+    process_fn = default(process_fn, Identity())
 
     n_train = int(split * X.shape[0])
 
@@ -369,7 +505,7 @@ def dataset_from_tensors(
         )
 
     return ScalerDataset(
-        name=name if exists(name) else "dataset",
+        name=default(name, "dataset"),
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         data_shape=data_shape,

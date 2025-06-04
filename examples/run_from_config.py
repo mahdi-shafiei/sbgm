@@ -1,8 +1,12 @@
-import jax.random as jr
+import sys
+import os
+import jax
 
 import sbgm
-import data 
-import configs 
+
+sys.path.append(os.path.dirname(__file__))
+
+from configs import *
 
 
 def main():
@@ -15,19 +19,19 @@ def main():
     root_dir = "./"
 
     # Config file for architecture and optimisation
-    config = [
-        configs.mnist_config(), 
-        configs.grfs_config(),
-        configs.flowers_config(),
-        configs.cifar10_config(),
-        configs.quijote_config() 
-    ][3]
+    config = dict(
+        mnist=mnist_config(), 
+        grfs=grfs_config(),
+        flowers=flowers_config(),
+        cifar10=cifar10_config(),
+        quijote=quijote_config() 
+    )["mnist"]
 
-    key = jr.key(config.seed)
-    data_key, model_key, train_key = jr.split(key, 3)
+    key = jax.random.key(config.seed)
+    data_key, model_key, train_key = jax.random.split(key, 3)
 
     # Dataset object of training data and loaders
-    dataset = data.get_dataset(datasets_path, data_key, config)
+    dataset = sbgm.data.get_dataset(datasets_path, data_key, config)
 
     # Multiple GPU training if you are so inclined
     sharding, replicated_sharding = sbgm.shard.get_shardings()

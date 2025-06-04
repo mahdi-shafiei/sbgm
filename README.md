@@ -132,7 +132,6 @@ To fit a diffusion model to the `cifar10` image dataset, try something like
 
 ```python
 import sbgm
-import data
 import configs
 
 datasets_path = "./"
@@ -143,7 +142,7 @@ config = configs.cifar10_config()
 key = jr.key(config.seed)
 data_key, model_key, train_key = jr.split(key, 3)
 
-dataset = data.cifar10(datasets_path, data_key)
+dataset = sbgm.data.cifar10(datasets_path, data_key)
 
 sharding = sbgm.shard.get_sharding()
     

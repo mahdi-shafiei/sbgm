@@ -26,10 +26,10 @@ dataset_name          = dataset.name
 img_shape             = (n_channels, n_pix, n_pix)
 
 # Model (DiT)
-n_heads               = 4  
-embed_dim             = 128
-patch_size            = 4 
-depth                 = 5
+n_heads               = 8  
+embed_dim             = 512
+patch_size            = 2 
+depth                 = 4
 
 # SDE
 t1                    = 8.
@@ -48,7 +48,7 @@ eu_sample             = True # Euler-Maruyama sample the SDE during training
 # Optimisation hyperparameters
 start_step            = 0
 n_steps               = 200_000
-batch_size            = 50 * len(jax.devices())
+batch_size            = 200 * len(jax.devices())
 sample_and_save_every = 2_000
 lr                    = 3e-4
 opt                   = optax.adamw
