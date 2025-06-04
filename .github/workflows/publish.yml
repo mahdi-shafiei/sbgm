@@ -1,13 +1,13 @@
 name: Publish package.
 
 on:
-    push:
-      branches:
-        - main
-      tags:
-        - '0.0.*'
-      paths:
-        - sbgm/**
+  push:
+    branches:
+      - main
+    tags:
+      - '0.0.*'
+    paths:
+      - sbgm/**
 
 jobs:
   build:

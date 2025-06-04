@@ -2,8 +2,8 @@ name: Run tests
 
 on:
   push:
-      paths:
-        - sbgm/**
+    paths:
+      - sbgm/**
 
 jobs:
   run-test:
