@@ -147,8 +147,8 @@ def sample_time(
     return t
 
 
-@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
+@jaxtyped(typechecker=typechecker)
 def batch_loss_fn(
     model: Model, 
     sde: SDE,
@@ -164,8 +164,8 @@ def batch_loss_fn(
     return loss_fn(x, q, a, t, keys_L).mean()
 
 
-@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
+@jaxtyped(typechecker=typechecker)
 def make_step(
     model: Model, 
     sde: SDE,

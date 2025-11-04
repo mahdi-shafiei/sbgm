@@ -128,8 +128,8 @@ def get_ode(
     return ode
 
 
-@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
+@jaxtyped(typechecker=typechecker)
 def log_likelihood(
     key: Optional[PRNGKeyArray], 
     model: eqx.Module, 

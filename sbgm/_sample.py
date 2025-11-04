@@ -18,8 +18,8 @@ from ._ode import get_solver
 """
 
 
-@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
+@jaxtyped(typechecker=typechecker)
 def single_ode_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
@@ -102,8 +102,8 @@ def single_ode_sample_fn(
     return sol.ys[0]
 
 
-@jaxtyped(typechecker=typechecker)
 @eqx.filter_jit
+@jaxtyped(typechecker=typechecker)
 def single_eu_sample_fn(
     model: eqx.Module, 
     sde: SDE, 
