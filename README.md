@@ -206,6 +206,10 @@ ODE sampling
 ### SDEs 
 ![alt text](assets/sdes.png?raw=true)
 
+### Contributing
+
+Want to add something? See `CONTRIBUTING.md`.
+
 ### Citations
 ```bibtex
 @misc{song2021scorebasedgenerativemodelingstochastic,
