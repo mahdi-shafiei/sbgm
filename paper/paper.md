@@ -74,16 +74,16 @@ This ODE can be solved with an initial-value problem to sample new data or estim
 
 ![A diagram showing a log-likelihood calculation over the support of a Gaussian mixture model with eight components. Data is drawn (shown in red) from this mixture to train the diffusion model that gives the likelihood (defined by the diffusion model) in gray. The log-likelihood is calculated using the ODE and a trained diffusion model. \label{fig:8gauss}](8gauss.png){ width=50% } 
 
-The likelihood estimate under a score-based diffusion model is estimated by solving the change-of-variables equation for continuous normalising flows.
+The likelihood estimate under a score-based diffusion model is estimated by solving the change-of-variables equation for continuous normalising flows
 
 $$
-\frac{\partial}{\partial t} \log p_t(\boldsymbol{x}_t) = \nabla_{\boldsymbol{x}_t} \cdot f(\boldsymbol{x}_t, t),
+\frac{\partial}{\partial t} \log p_t(\boldsymbol{x}_t) = - \nabla_{\boldsymbol{x}_t} \cdot f(\boldsymbol{x}_t, t),
 $$
 
 which gives the log-likelihood of a single datapoint $\boldsymbol{x}_0$ as 
 
 $$
-\log p(\boldsymbol{x}_0) = \log p(\boldsymbol{x}_T) + \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}_t}\cdot f(\boldsymbol{x}_t, t).
+\log p(\boldsymbol{x}_0) = \log p(\boldsymbol{x}_T) - \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}_t}\cdot f(\boldsymbol{x}_t, t).
 $$
 
 The code implements these calculations also for the Hutchinson trace estimation method [@ffjord, @Hutchinson] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
