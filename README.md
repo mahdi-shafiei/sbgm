@@ -34,10 +34,10 @@ $$
 the reverse of the SDE from noise to data is given by 
 
 $$
-\text{d}x_t = [f(x_t, t) - g(t)^2\nabla_{x_t}\log p_t(x_t)]\text{d}t + g(t)\text{d}w_t.
+\text{d}x_t = [f(x_t, t) - g(t)^2\nabla_{x_t}\log p_t(x_t)]\text{d}t + g(t)\text{d}w_t,
 $$
 
-For every SDE there exists an associated ordinary differential equation (ODE)
+Where $\text{d}w_t \sim \mathcal{G}[\text{d}w_t | 0, 1]$. For every SDE there exists an associated ordinary differential equation (ODE)
 
 $$
 \text{d}x_t = [f(x_t, t)\text{d}t - \frac{1}{2}g(t)^2\nabla_{x_t}\log p_t(x_t)]\text{d}t,
