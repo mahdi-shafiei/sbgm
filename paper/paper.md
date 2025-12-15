@@ -30,7 +30,7 @@ aas-journal: Astrophysical Journal <- The name of the AAS journal.
 
 # Summary
 
-Diffusion models [@diffusion; @ddpm; @sde] have emerged as the dominant paradigm for generative modelling based on performance in a variety of tasks [@ldms; @dits]. The advantages of accurate density estimation and high-quality samples of normalising flows [@flows; @ffjord], VAEs [@vaes] and GANs [@gans] are subsumed into this method. Significant limitations exist on implicit and neural network based likelihood models with respect to modelling normalised probability distributions and sampling speed. Score-matching diffusion models are more efficient than previous generative model algorithms for these tasks. The diffusion process is agnostic to the data representation meaning different types of data such as audio, point-clouds, videos and images can be modelled. 
+Diffusion models [@diffusion; @ddpm; @sde] have emerged as the dominant paradigm for generative modeling based on performance in a variety of tasks [@ldms; @dits]. The advantages of accurate density estimation and high-quality samples of normalising flows [@flows; @ffjord], VAEs [@vaes] and GANs [@gans] are subsumed into this method. Significant limitations exist on implicit and neural network based likelihood models with respect to modeling normalised probability distributions and sampling speed. Score-matching diffusion models are more efficient than previous generative model algorithms for these tasks. The diffusion process is agnostic to the data representation meaning different types of data such as audio, point-clouds, videos and images can be modelled. 
 
 # Statement of need
 
@@ -42,7 +42,7 @@ The software we present, `sbgm`, is designed to be used by researchers in machin
 
 # Diffusion  
 
-Diffusion in the context of generative modelling describes the process of adding small amounts of noise sequentially to samples of data $\boldsymbol{x}$ [@diffusion]. A generative model for the data arises from training a neural network to reverse this process by subtracting the noise added to the data.
+Diffusion in the context of generative modeling describes the process of adding small amounts of noise sequentially to samples of data $\boldsymbol{x}$ [@diffusion]. A generative model for the data arises from training a neural network to reverse this process by subtracting the noise added to the data.
 
 Score-based diffusion models [@sde] model a forward diffusion process with Stochastic Differential Equations (SDEs) of the form
 
@@ -86,11 +86,11 @@ $$
 \log p(\boldsymbol{x}_0) = \log p(\boldsymbol{x}_T) - \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}_t}\cdot f(\boldsymbol{x}_t, t).
 $$
 
-The code implements these calculations also for the Hutchinson trace estimation method [@ffjord, @Hutchinson] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
+The code implements these calculations also for the Hutchinson trace estimation method [@ffjord; @Hutchinson] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
 
 # Implementations and future work
 
-Diffusion models are defined in `sbgm` via a score-network model $\boldsymbol{s}_{\theta}$ and an SDE. All the available SDEs (variance exploding (VE), variance preserving (VP) and sub-variance preserving (SubVP) [@sde]) in the literature of score-based diffusion models are available. We provide implementations for UNet [@unet], Diffusion Transformers [@dit], MLP-Mixer [@mixer] and Residual Network [@resnet] models which are state-of-the-art for diffusion tasks. It is possible to fit score-based diffusion models to a conditional distribution $p(\boldsymbol{x}|\boldsymbol{\pi}, \boldsymbol{y})$ where in typical inverse problems $\boldsymbol{y}$ would be an image and $\boldsymbol{\pi}$ a set of parameters in a physical model for the data [@conditional_diffusion] (e.g. to solve inverse problems). The code is compatible with any model written in the `equinox` [@equinox] framework. We recently extended the code to provide transformer-based diffusion models [@dits] and plan to extend to latent diffusion models [@ldms] and flow matching [@lipman2023flowmatchinggenerativemodeling]. 
+Diffusion models are defined in `sbgm` via a score-network model $\boldsymbol{s}_{\theta}$ and an SDE. All the available SDEs (variance exploding (VE), variance preserving (VP) and sub-variance preserving (SubVP) [@sde]) in the literature of score-based diffusion models are available. We provide implementations for UNet [@unet], Diffusion Transformers [@dit], MLP-Mixer [@mixer] and Residual Network [@resnet] models which are state-of-the-art for diffusion tasks. It is possible to fit score-based diffusion models to a conditional distribution $p(\boldsymbol{x}|\boldsymbol{\pi}, \boldsymbol{y})$ where in typical inverse problems $\boldsymbol{y}$ would be an image and $\boldsymbol{\pi}$ a set of parameters in a physical model for the data [@conditional_diffusion] (e.g. to solve inverse problems). The code is compatible with any model written in the `equinox` [@equinox] framework. We recently extended the code to provide transformer-based diffusion models [@dit] and plan to extend to latent diffusion models [@ldms] and flow matching [@lipman2023flowmatchinggenerativemodeling]. 
 
 # Acknowledgements
 
