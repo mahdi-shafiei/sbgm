@@ -86,7 +86,7 @@ $$
 \log p(\boldsymbol{x}_0) = \log p(\boldsymbol{x}_T) - \int_{t=0}^{t=T}\text{d}t \; \nabla_{\boldsymbol{x}_t}\cdot f(\boldsymbol{x}_t, t).
 $$
 
-The code implements these calculations also for the Hutchinson trace estimation method [@ffjord; @Hutchinson] that reduces the computational expense of the estimate. Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model with the ODE associated from an SDE. 
+The code implements these calculations also for the Hutchinson trace estimation method [@ffjord; @Hutchinson] which reduces the computational expense of the density estimate. This is because the divergence term $\nabla_{\boldsymbol{x}_t}\cdot f(\boldsymbol{x}_t, t)$ is materialised via a cheaper vector-Jacobian product (i.e. a $\mathcal{O}(\text{dim}(\boldsymbol{x}))$ operation versus a $\mathcal{O}(\text{dim}(\boldsymbol{x})^2)$ operation for the full Jacobian). Figure \ref{fig:8gauss} shows an example of a data-likelihood calculation using a trained diffusion model, where the density estimate from the ODE is calculated after training with the associated SDE of the forward diffusion process. 
 
 # Implementations and future work
 
