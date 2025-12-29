@@ -30,7 +30,7 @@ aas-journal: Astrophysical Journal <- The name of the AAS journal.
 
 # Summary
 
-Diffusion models [@diffusion; @ddpm; @sde] have emerged as the dominant paradigm for generative modeling based on performance in a variety of tasks [@ldms; @dits]. The advantages of accurate density estimation and high-quality samples of normalising flows [@flows; @ffjord], VAEs [@vaes] and GANs [@gans] are subsumed into this method. Significant limitations exist on implicit and neural network based likelihood models with respect to modeling normalised probability distributions and sampling speed. Score-matching diffusion models are more efficient than previous generative model algorithms for these tasks. The diffusion process is agnostic to the data representation meaning different types of data such as audio, point-clouds, videos and images can be modelled. 
+Diffusion models [@diffusion; @ddpm; @sde] have emerged as the dominant paradigm for generative modeling based on performance in a variety of tasks [@ldms; @dit]. The advantages of accurate density estimation and high-quality samples of normalising flows [@flows; @ffjord], VAEs [@vaes] and GANs [@gans] are subsumed into this method. Significant limitations exist on implicit and neural network based likelihood models with respect to modeling normalised probability distributions and sampling speed. Score-matching diffusion models are more efficient than previous generative model algorithms for these tasks. The diffusion process is agnostic to the data representation meaning different types of data such as audio, point-clouds, videos and images can be modelled. 
 
 # Statement of need
 
